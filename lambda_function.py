@@ -95,17 +95,16 @@ body { margin:0; background:#f4f5f7; color:#1a1a1a;
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
 .wrap { max-width:640px; margin:32px auto; background:#fff; border:1px solid #e3e5e8;
   border-radius:10px; overflow:hidden; }
-.head { background:#0f1e35; color:#fff; padding:22px 28px; }
-.head .brand { font-size:12px; letter-spacing:.14em; text-transform:uppercase; opacity:.72; }
-.head h1 { margin:6px 0 0 0; font-size:22px; font-weight:600; }
-.body { padding:26px 28px; }
-.recital { background:#f7f9fc; border:1px solid #e6ebf2; border-radius:8px;
-  padding:18px 20px; margin-bottom:22px; }
-.recital .row { display:flex; justify-content:space-between; padding:6px 0;
-  border-bottom:1px solid #eef1f5; font-size:15px; }
-.recital .row:last-child { border-bottom:none; }
-.recital .k { color:#5b6472; }
-.recital .v { font-weight:600; text-align:right; }
+.head { padding:30px 40px 0; text-align:center; }
+.head h1 { margin:0; font-size:16px; font-weight:700; letter-spacing:.18em;
+  text-transform:uppercase; color:#0f1e35; }
+.head .rule { height:2px; background:#0f1e35; width:48px; margin:12px auto 0; }
+.body { padding:22px 40px 30px; }
+.effdate { text-align:right; font-size:14px; color:#3a4350; margin:0 0 22px; }
+.letter { font-size:15px; line-height:1.65; color:#1a1a1a; }
+.letter p { margin:0 0 18px; }
+.terms-h { font-size:13px; text-transform:uppercase; letter-spacing:.09em;
+  color:#5b6472; margin:26px 0 4px; font-weight:700; }
 .roundnote { background:#fff8e6; border:1px solid #f0e2b6; border-radius:8px;
   padding:14px 16px; font-size:14px; line-height:1.5; margin-bottom:22px; color:#5a4a12; }
 .feebox { border:1px solid #e6ebf2; border-radius:8px; padding:14px 18px; margin-bottom:22px; }
@@ -168,11 +167,17 @@ def render_loi(deal, person):
     inv = cf_first(pcf, INVESTOR_LEVEL_FIELD)
     party_label = "Qualified Purchaser" if str(inv) == str(QP_ID) else ("Seller" if is_sell else "Buyer")
 
-    # ── recital rows ──
+    # ── recital paragraph (letter body) ──
+    purchaser = entity or signer_name or "_____"
     recital = f'''
-      <div class="row"><span class="k">Security</span><span class="v">{escape(security)}</span></div>
-      <div class="row"><span class="k">Transaction</span><span class="v">{action_noun}</span></div>
-      <div class="row"><span class="k">Structure</span><span class="v">{escape(structure_label)}</span></div>
+      <p>This Letter of Intent (this &ldquo;Letter&rdquo;), dated as of {escape(today)}
+      (the &ldquo;Effective Date&rdquo;), sets forth the principal terms (the &ldquo;Terms&rdquo;)
+      of the purchase (the &ldquo;Purchase&rdquo;) of shares (the &ldquo;Shares&rdquo;) in
+      {escape(security)} (the &ldquo;Company&rdquo;) by {purchaser} (&ldquo;Purchaser&rdquo;)
+      from &ldquo;Seller&rdquo;, the Purchaser intend to be, and are, bound by the terms set
+      forth in this Letter, provided, however, that in the event of any conflict between this
+      Letter and an agreement between the Parties executed after the Effective Date (a
+      &ldquo;Subsequent Agreement&rdquo;), the Subsequent Agreement shall govern.</p>
     '''
 
     # ── price / size entry ──
@@ -246,9 +251,12 @@ def render_loi(deal, person):
   <div class="wrap">
     <div class="head">
       <h1>Letter of Intent</h1>
+      <div class="rule"></div>
     </div>
     <div class="body">
-      <div class="recital">{recital}</div>
+      <div class="effdate">{escape(today)}</div>
+      <div class="letter">{recital}</div>
+      <div class="terms-h">The Terms</div>
       {price_section}
       {fee_section}
       {sig}
