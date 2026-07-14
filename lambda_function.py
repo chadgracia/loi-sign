@@ -121,6 +121,8 @@ input[type=text] { width:100%; padding:11px 13px; font-size:16px; border:1px sol
 input.feein { width:130px; padding:7px 9px; font-size:14px; text-align:right; }
 .prefill { color:#9aa1ab; }
 .hint { font-size:12px; color:#8a929d; margin-top:6px; }
+.req { color:#c0392b; font-weight:700; }
+input.invalid { border-color:#c0392b; background:#fdecef; }
 .sig { margin-top:26px; border-top:1px dashed #cfd5dd; padding-top:20px; }
 .sig .name { font-size:14px; font-weight:400; color:#1a1a1a; }
 .sig .meta { font-size:14px; color:#5b6472; margin-top:0; line-height:1.45; }
@@ -199,15 +201,15 @@ def render_loi(deal, person, role=""):
       <p>This Letter of Intent, dated as of {escape(today)} (the &ldquo;Effective Date&rdquo;),
       sets forth the principal terms of the {txn_lc} of shares in {escape(security)}
       (the &ldquo;Company&rdquo;) by {entity_or_name} (&ldquo;{signer_party}&rdquo;) {counter_clause}.
-      The {signer_party} intends to be, and is, bound by the terms set forth herein, provided
-      that any agreement between the parties executed after the Effective Date shall govern in
-      the event of a conflict.</p>
+      The {signer_party} intends to be, and is, bound by the terms set forth herein.
+      This letter shall be superseded in its entirety by any transfer notice or share purchase
+      agreement subsequently executed between the parties, the terms of which shall control.</p>
     '''
 
     # fee values (used by both the editable box and the closing terms paragraph)
-    mgmt  = cf_first(cf, MGMT_FEE_FIELD)
-    carry = cf_first(cf, CARRY_FIELD)
-    sfee  = cf_first(cf, SELLER_FEE_FIELD)
+    mgmt  = cf_first(cf, MGMT_FEE_FIELD) or "0"
+    carry = cf_first(cf, CARRY_FIELD) or "0"
+    sfee  = cf_first(cf, SELLER_FEE_FIELD) or "0"
 
     # ── closing terms paragraph (prose restatement, updates live from the inputs) ──
     consideration = "aggregate consideration" if is_sell else "aggregate purchase price"
@@ -232,21 +234,28 @@ def render_loi(deal, person, role=""):
     '''
 
     # ── price / size entry ──
-    min_ticket = fmt_money(cf_first(cf, MIN_SIZE_FIELD))
-    try:
-        min_raw = int(float(str(cf_first(cf, MIN_SIZE_FIELD)).replace(",", "")))
-    except (TypeError, ValueError):
-        min_raw = 0
-    size_hint = (f'<div class="hint">Minimum ticket: ${min_ticket}. You can increase but not go below.</div>'
-                 if min_ticket else '')
-    size_input = (f'<input type="text" name="size" class="prefill" value="{min_ticket or ""}" '
+    FIRM_MIN  = 100000
+    buyer_req = '' if is_sell else ' data-required="1"'
+    req_star  = '' if is_sell else ' <span class="req">*</span>'
+    if is_sell:
+        min_raw  = FIRM_MIN
+        min_disp = "100,000"
+    else:
+        try:
+            min_raw = int(float(str(cf_first(cf, MIN_SIZE_FIELD)).replace(",", "")))
+        except (TypeError, ValueError):
+            min_raw = 0
+        min_disp = fmt_money(cf_first(cf, MIN_SIZE_FIELD)) or ""
+    size_hint = (f'<div class="hint">Minimum: ${min_disp}. You can increase but not go below.</div>'
+                 if min_disp else '')
+    size_input = (f'<input type="text" name="size" class="prefill" value="{min_disp}"{buyer_req} '
                   f'data-min="{min_raw}" oninput="this.classList.remove(\'prefill\');syncTerms()" '
                   f'onblur="clampMin(this)">')
     if tied:
         price_section = f'''
       <div class="roundnote">Purchase price: to be established at the net per-share price
       determined upon closing of {escape(security)}'s current financing round or tender.</div>
-      <label>Size you intend to {action_verb} (USD)</label>
+      <label>Size you intend to {action_verb} (USD){req_star}</label>
       {size_input}
       {size_hint}
         '''
@@ -254,7 +263,7 @@ def render_loi(deal, person, role=""):
         price_section = f'''
       <label>{price_word.capitalize()} price per share (USD) — current price shown; confirm or adjust</label>
       <input type="text" name="gross" class="prefill" value="{price or ''}" oninput="this.classList.remove('prefill');syncTerms()">
-      <label>Size you intend to {action_verb} (USD)</label>
+      <label>Size you intend to {action_verb} (USD){req_star}</label>
       {size_input}
       {size_hint}
         '''
@@ -265,10 +274,10 @@ def render_loi(deal, person, role=""):
         fee_section = f'''
       <div class="feebox">
         <h3>SPV terms to confirm</h3>
-        <div class="frow"><span>Management fee</span>
-          <input type="text" name="mgmt_fee" class="feein prefill" value="{escape(str(mgmt))}" oninput="this.classList.remove('prefill');syncTerms()"></div>
-        <div class="frow"><span>Carry</span>
-          <input type="text" name="carry" class="feein prefill" value="{escape(str(carry))}" oninput="this.classList.remove('prefill');syncTerms()"></div>
+        <div class="frow"><span>Management fee{req_star}</span>
+          <input type="text" name="mgmt_fee" class="feein prefill" value="{escape(str(mgmt))}"{buyer_req} oninput="this.classList.remove('prefill');syncTerms()"></div>
+        <div class="frow"><span>Carry{req_star}</span>
+          <input type="text" name="carry" class="feein prefill" value="{escape(str(carry))}"{buyer_req} oninput="this.classList.remove('prefill');syncTerms()"></div>
         <div class="frow"><span>Seller fee</span>
           <input type="text" name="seller_fee" class="feein prefill" value="{escape(str(sfee))}" oninput="this.classList.remove('prefill');syncTerms()"></div>
       </div>
@@ -311,7 +320,7 @@ def render_loi(deal, person, role=""):
       <div class="letter">{terms_para}</div>
       {sig}
       <div class="signwrap">
-        <button class="signbtn" onclick="alert('Preview only — signing is not wired up yet.');return false;">Click to sign</button>
+        <button class="signbtn" onclick="if(!validateReq())return false;alert('Preview only — signing is not wired up yet.');return false;">Click to sign</button>
         <div class="sigrule"></div>
       </div>
     </div>
@@ -322,6 +331,15 @@ def render_loi(deal, person, role=""):
     var val = parseFloat((el.value || '').replace(/,/g, ''));
     if (!isNaN(val) && val < min) {{ el.value = min.toLocaleString('en-US'); }}
     syncTerms();
+  }}
+  function validateReq() {{
+    var ok = true;
+    document.querySelectorAll('[data-required]').forEach(function(el) {{
+      if (el.value.trim() === '') {{ el.classList.add('invalid'); ok = false; }}
+      else {{ el.classList.remove('invalid'); }}
+    }});
+    if (!ok) {{ alert('Please complete the required fields.'); }}
+    return ok;
   }}
   function syncTerms() {{
     function grp(s) {{
