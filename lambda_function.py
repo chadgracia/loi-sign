@@ -116,6 +116,9 @@ body { margin:0; background:#f4f5f7; color:#1a1a1a;
 label { display:block; font-size:13px; color:#5b6472; margin:14px 0 6px; }
 input[type=text] { width:100%; padding:11px 13px; font-size:16px; border:1px solid #cfd5dd;
   border-radius:7px; }
+input.feein { width:130px; padding:7px 9px; font-size:14px; text-align:right; }
+.prefill { color:#9aa1ab; }
+.hint { font-size:12px; color:#8a929d; margin-top:6px; }
 .sig { margin-top:26px; border-top:1px dashed #cfd5dd; padding-top:20px; }
 .sig .name { font-size:18px; font-weight:600; }
 .sig .meta { font-size:14px; color:#5b6472; margin-top:2px; line-height:1.45; }
@@ -173,19 +176,31 @@ def render_loi(deal, person):
     '''
 
     # ── price / size entry ──
+    min_ticket = fmt_money(cf_first(cf, MIN_SIZE_FIELD))
+    try:
+        min_raw = int(float(str(cf_first(cf, MIN_SIZE_FIELD)).replace(",", "")))
+    except (TypeError, ValueError):
+        min_raw = 0
+    size_hint = (f'<div class="hint">Minimum ticket: ${min_ticket}. You can increase but not go below.</div>'
+                 if min_ticket else '')
+    size_input = (f'<input type="text" name="size" class="prefill" value="{min_ticket or ""}" '
+                  f'data-min="{min_raw}" oninput="this.classList.remove(\'prefill\')" '
+                  f'onblur="clampMin(this)">')
     if tied:
         price_section = f'''
       <div class="roundnote">Purchase price: to be established at the net per-share price
       determined upon closing of {escape(security)}'s current financing round or tender.</div>
       <label>Size you intend to {action_verb} (USD)</label>
-      <input type="text" name="size" value="{target or ''}" placeholder="e.g. 1,000,000">
+      {size_input}
+      {size_hint}
         '''
     else:
         price_section = f'''
-      <label>Gross price per share (USD)</label>
-      <input type="text" name="gross" value="{gross or ''}" placeholder="e.g. 313.00">
+      <label>Gross price per share (USD) — current price shown; confirm or adjust</label>
+      <input type="text" name="gross" class="prefill" value="{gross or ''}" oninput="this.classList.remove('prefill')">
       <label>Size you intend to {action_verb} (USD)</label>
-      <input type="text" name="size" value="{target or ''}" placeholder="e.g. 1,000,000">
+      {size_input}
+      {size_hint}
         '''
 
     # ── SPV fee stack (shown for SPV, firm or tied) ──
@@ -198,9 +213,12 @@ def render_loi(deal, person):
       <div class="feebox">
         <h3>SPV terms to confirm</h3>
         <div class="note">These amounts are before Rainmaker commission.</div>
-        <div class="frow"><span>Management fee</span><span>{escape(str(mgmt))}</span></div>
-        <div class="frow"><span>Carry</span><span>{escape(str(carry))}</span></div>
-        <div class="frow"><span>Seller fee</span><span>{escape(str(sfee))}</span></div>
+        <div class="frow"><span>Management fee</span>
+          <input type="text" name="mgmt_fee" class="feein prefill" value="{escape(str(mgmt))}" oninput="this.classList.remove('prefill')"></div>
+        <div class="frow"><span>Carry</span>
+          <input type="text" name="carry" class="feein prefill" value="{escape(str(carry))}" oninput="this.classList.remove('prefill')"></div>
+        <div class="frow"><span>Seller fee</span>
+          <input type="text" name="seller_fee" class="feein prefill" value="{escape(str(sfee))}" oninput="this.classList.remove('prefill')"></div>
       </div>
         '''
 
@@ -227,7 +245,6 @@ def render_loi(deal, person):
   <div class="preview">PREVIEW — layout only, nothing is saved or sent</div>
   <div class="wrap">
     <div class="head">
-      <div class="brand">Rainmaker Securities</div>
       <h1>Letter of Intent</h1>
     </div>
     <div class="body">
@@ -240,6 +257,13 @@ def render_loi(deal, person):
     <div class="foot">This letter reflects an indication of intent and is not a binding
     commitment. Party level on file: {escape(party_label)}.</div>
   </div>
+  <script>
+  function clampMin(el) {{
+    var min = parseFloat(el.getAttribute('data-min')) || 0;
+    var val = parseFloat((el.value || '').replace(/,/g, ''));
+    if (!isNaN(val) && val < min) {{ el.value = min.toLocaleString('en-US'); }}
+  }}
+  </script>
 </body></html>'''
 
 def _resp(code, body, ctype):
