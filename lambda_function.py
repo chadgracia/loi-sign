@@ -174,23 +174,21 @@ def render_loi(deal, person, role="buyer"):
     # ── letter recital (side-aware) ──
     entity_or_name = entity or signer_name or "_____"
     if is_sell:
-        txn_lc, txn_cap = "sale", "Sale"
-        signer_party    = "Seller"
-        counter_clause  = 'to the Purchaser (the &ldquo;Purchaser&rdquo;)'
+        txn_lc         = "sale"
+        signer_party   = "Seller"
+        counter_clause = "to the Purchaser"
     else:
-        txn_lc, txn_cap = "purchase", "Purchase"
-        signer_party    = "Purchaser"
-        counter_clause  = 'from the Seller (the &ldquo;Seller&rdquo;)'
+        txn_lc         = "purchase"
+        signer_party   = "Purchaser"
+        counter_clause = "from the Seller"
 
     recital = f'''
       <p>This Letter of Intent, dated as of {escape(today)} (the &ldquo;Effective Date&rdquo;),
-      sets forth the principal terms (the &ldquo;Terms&rdquo;) of the {txn_lc}
-      (the &ldquo;{txn_cap}&rdquo;) of shares (the &ldquo;Shares&rdquo;) in {escape(security)}
+      sets forth the principal terms of the {txn_lc} of shares in {escape(security)}
       (the &ldquo;Company&rdquo;) by {entity_or_name} (&ldquo;{signer_party}&rdquo;) {counter_clause}.
-      The {signer_party} intends to be, and is, bound by the terms set forth in this Letter,
-      provided, however, that in the event of any conflict between this Letter and an agreement
-      between the Parties executed after the Effective Date (a &ldquo;Subsequent Agreement&rdquo;),
-      the Subsequent Agreement shall govern.</p>
+      The {signer_party} intends to be, and is, bound by the terms set forth herein, provided
+      that any agreement between the parties executed after the Effective Date shall govern in
+      the event of a conflict.</p>
     '''
 
     # fee values (used by both the editable box and the closing terms paragraph)
@@ -198,23 +196,26 @@ def render_loi(deal, person, role="buyer"):
     carry = cf_first(cf, CARRY_FIELD)
     sfee  = cf_first(cf, SELLER_FEE_FIELD)
 
-    # ── closing terms paragraph (prose restatement) ──
+    # ── closing terms paragraph (prose restatement, updates live from the inputs) ──
     consideration = "aggregate consideration" if is_sell else "aggregate purchase price"
     if tied:
-        price_clause = ("at a per-Share price to be established at the net per-share price "
+        price_clause = ("at a per-share price to be established at the net per-share price "
                         "determined upon the closing of the Company&rsquo;s current financing "
                         "round or tender")
     else:
-        price_clause = f"at a gross price of ${gross or '&mdash;'} per Share"
+        price_clause = (f"at a gross price of $<span id=\"tp-price\">{gross or '&mdash;'}</span> "
+                        f"per share")
     fee_clause = ""
     if is_spv:
-        fee_clause = (f" The foregoing is exclusive of a management fee of {escape(str(mgmt))}, "
-                      f"carried interest of {escape(str(carry))}, and a seller fee of "
-                      f"{escape(str(sfee))}, in each case before Rainmaker Securities&rsquo; "
-                      f"commission.")
+        fee_clause = (f" This price is exclusive of a management fee of "
+                      f"<span id=\"tp-mgmt\">{escape(str(mgmt))}</span>, carried interest of "
+                      f"<span id=\"tp-carry\">{escape(str(carry))}</span>, and a seller fee of "
+                      f"<span id=\"tp-sfee\">{escape(str(sfee))}</span>, in each case before "
+                      f"Rainmaker Securities&rsquo; commission.")
     terms_para = f'''
-      <p>Accordingly, the {signer_party} proposes to {action_verb} Shares of the Company for an
-      {consideration} of up to ${target or '&mdash;'}, {price_clause}.{fee_clause}</p>
+      <p>Accordingly, the {signer_party} proposes to {action_verb} shares of the Company for an
+      {consideration} of up to $<span id="tp-size">{target or '&mdash;'}</span>,
+      {price_clause}.{fee_clause}</p>
     '''
 
     # ── price / size entry ──
@@ -226,7 +227,7 @@ def render_loi(deal, person, role="buyer"):
     size_hint = (f'<div class="hint">Minimum ticket: ${min_ticket}. You can increase but not go below.</div>'
                  if min_ticket else '')
     size_input = (f'<input type="text" name="size" class="prefill" value="{min_ticket or ""}" '
-                  f'data-min="{min_raw}" oninput="this.classList.remove(\'prefill\')" '
+                  f'data-min="{min_raw}" oninput="this.classList.remove(\'prefill\');syncTerms()" '
                   f'onblur="clampMin(this)">')
     if tied:
         price_section = f'''
@@ -239,7 +240,7 @@ def render_loi(deal, person, role="buyer"):
     else:
         price_section = f'''
       <label>Gross price per share (USD) — current price shown; confirm or adjust</label>
-      <input type="text" name="gross" class="prefill" value="{gross or ''}" oninput="this.classList.remove('prefill')">
+      <input type="text" name="gross" class="prefill" value="{gross or ''}" oninput="this.classList.remove('prefill');syncTerms()">
       <label>Size you intend to {action_verb} (USD)</label>
       {size_input}
       {size_hint}
@@ -253,11 +254,11 @@ def render_loi(deal, person, role="buyer"):
         <h3>SPV terms to confirm</h3>
         <div class="note">These amounts are before Rainmaker commission.</div>
         <div class="frow"><span>Management fee</span>
-          <input type="text" name="mgmt_fee" class="feein prefill" value="{escape(str(mgmt))}" oninput="this.classList.remove('prefill')"></div>
+          <input type="text" name="mgmt_fee" class="feein prefill" value="{escape(str(mgmt))}" oninput="this.classList.remove('prefill');syncTerms()"></div>
         <div class="frow"><span>Carry</span>
-          <input type="text" name="carry" class="feein prefill" value="{escape(str(carry))}" oninput="this.classList.remove('prefill')"></div>
+          <input type="text" name="carry" class="feein prefill" value="{escape(str(carry))}" oninput="this.classList.remove('prefill');syncTerms()"></div>
         <div class="frow"><span>Seller fee</span>
-          <input type="text" name="seller_fee" class="feein prefill" value="{escape(str(sfee))}" oninput="this.classList.remove('prefill')"></div>
+          <input type="text" name="seller_fee" class="feein prefill" value="{escape(str(sfee))}" oninput="this.classList.remove('prefill');syncTerms()"></div>
       </div>
         '''
 
@@ -307,6 +308,19 @@ def render_loi(deal, person, role="buyer"):
     var min = parseFloat(el.getAttribute('data-min')) || 0;
     var val = parseFloat((el.value || '').replace(/,/g, ''));
     if (!isNaN(val) && val < min) {{ el.value = min.toLocaleString('en-US'); }}
+    syncTerms();
+  }}
+  function syncTerms() {{
+    function put(id, name) {{
+      var span = document.getElementById(id);
+      var input = document.querySelector('[name="' + name + '"]');
+      if (span && input && input.value.trim() !== '') {{ span.textContent = input.value.trim(); }}
+    }}
+    put('tp-size', 'size');
+    put('tp-price', 'gross');
+    put('tp-mgmt', 'mgmt_fee');
+    put('tp-carry', 'carry');
+    put('tp-sfee', 'seller_fee');
   }}
   </script>
 </body></html>'''
