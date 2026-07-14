@@ -104,7 +104,10 @@ body { margin:0; background:#f4f5f7; color:#1a1a1a;
 .letter { font-size:15px; line-height:1.65; color:#1a1a1a; }
 .letter p { margin:0 0 18px; }
 .terms-h { font-size:13px; text-transform:uppercase; letter-spacing:.09em;
-  color:#5b6472; margin:26px 0 4px; font-weight:700; }
+  color:#5b6472; margin:26px 0 8px; font-weight:700; }
+.termsbox { border:1px solid #e6ebf2; border-radius:8px; padding:16px 18px 6px;
+  background:#fafbfc; margin-bottom:20px; }
+.termsbox label:first-child { margin-top:0; }
 .roundnote { background:#fff8e6; border:1px solid #f0e2b6; border-radius:8px;
   padding:14px 16px; font-size:14px; line-height:1.5; margin-bottom:22px; color:#5a4a12; }
 .feebox { border:1px solid #e6ebf2; border-radius:8px; padding:14px 18px; margin-bottom:22px; }
@@ -128,13 +131,14 @@ input.feein { width:130px; padding:7px 9px; font-size:14px; text-align:right; }
   padding:7px; font-weight:600; letter-spacing:.03em; }
 """
 
-def render_loi(deal, person):
+def render_loi(deal, person, role="buyer"):
     cf   = deal.get("custom_fields", {}) or {}
     pcf  = person.get("custom_fields", {}) or {}
 
-    # side
-    type_ids = [int(x) for x in cf_list(cf, DEAL_TYPE_FIELD) if x]
-    is_sell  = SELL_TYPE_ID in type_ids
+    # signer role drives the letter: a buyer signs a Purchase LOI, a seller a Sale LOI.
+    # This is the signer's role, not the deal's listed side — the counterparty who bids
+    # on a Sell Order is a buyer, and a counterparty on a Buy Order is a seller.
+    is_sell     = (role == "seller")
     action_verb = "sell" if is_sell else "purchase"
     action_noun = "Sale" if is_sell else "Purchase"
 
@@ -167,17 +171,50 @@ def render_loi(deal, person):
     inv = cf_first(pcf, INVESTOR_LEVEL_FIELD)
     party_label = "Qualified Purchaser" if str(inv) == str(QP_ID) else ("Seller" if is_sell else "Buyer")
 
-    # ── recital paragraph (letter body) ──
-    purchaser = entity or signer_name or "_____"
+    # ── letter recital (side-aware) ──
+    entity_or_name = entity or signer_name or "_____"
+    if is_sell:
+        txn_lc, txn_cap = "sale", "Sale"
+        signer_party    = "Seller"
+        counter_clause  = 'to the Purchaser (the &ldquo;Purchaser&rdquo;)'
+    else:
+        txn_lc, txn_cap = "purchase", "Purchase"
+        signer_party    = "Purchaser"
+        counter_clause  = 'from the Seller (the &ldquo;Seller&rdquo;)'
+
     recital = f'''
-      <p>This Letter of Intent (this &ldquo;Letter&rdquo;), dated as of {escape(today)}
-      (the &ldquo;Effective Date&rdquo;), sets forth the principal terms (the &ldquo;Terms&rdquo;)
-      of the purchase (the &ldquo;Purchase&rdquo;) of shares (the &ldquo;Shares&rdquo;) in
-      {escape(security)} (the &ldquo;Company&rdquo;) by {purchaser} (&ldquo;Purchaser&rdquo;)
-      from &ldquo;Seller&rdquo;, the Purchaser intend to be, and are, bound by the terms set
-      forth in this Letter, provided, however, that in the event of any conflict between this
-      Letter and an agreement between the Parties executed after the Effective Date (a
-      &ldquo;Subsequent Agreement&rdquo;), the Subsequent Agreement shall govern.</p>
+      <p>This Letter of Intent, dated as of {escape(today)} (the &ldquo;Effective Date&rdquo;),
+      sets forth the principal terms (the &ldquo;Terms&rdquo;) of the {txn_lc}
+      (the &ldquo;{txn_cap}&rdquo;) of shares (the &ldquo;Shares&rdquo;) in {escape(security)}
+      (the &ldquo;Company&rdquo;) by {entity_or_name} (&ldquo;{signer_party}&rdquo;) {counter_clause}.
+      The {signer_party} intends to be, and is, bound by the terms set forth in this Letter,
+      provided, however, that in the event of any conflict between this Letter and an agreement
+      between the Parties executed after the Effective Date (a &ldquo;Subsequent Agreement&rdquo;),
+      the Subsequent Agreement shall govern.</p>
+    '''
+
+    # fee values (used by both the editable box and the closing terms paragraph)
+    mgmt  = cf_first(cf, MGMT_FEE_FIELD)
+    carry = cf_first(cf, CARRY_FIELD)
+    sfee  = cf_first(cf, SELLER_FEE_FIELD)
+
+    # ── closing terms paragraph (prose restatement) ──
+    consideration = "aggregate consideration" if is_sell else "aggregate purchase price"
+    if tied:
+        price_clause = ("at a per-Share price to be established at the net per-share price "
+                        "determined upon the closing of the Company&rsquo;s current financing "
+                        "round or tender")
+    else:
+        price_clause = f"at a gross price of ${gross or '&mdash;'} per Share"
+    fee_clause = ""
+    if is_spv:
+        fee_clause = (f" The foregoing is exclusive of a management fee of {escape(str(mgmt))}, "
+                      f"carried interest of {escape(str(carry))}, and a seller fee of "
+                      f"{escape(str(sfee))}, in each case before Rainmaker Securities&rsquo; "
+                      f"commission.")
+    terms_para = f'''
+      <p>Accordingly, the {signer_party} proposes to {action_verb} Shares of the Company for an
+      {consideration} of up to ${target or '&mdash;'}, {price_clause}.{fee_clause}</p>
     '''
 
     # ── price / size entry ──
@@ -211,9 +248,6 @@ def render_loi(deal, person):
     # ── SPV fee stack (shown for SPV, firm or tied) ──
     fee_section = ""
     if is_spv:
-        mgmt   = cf_first(cf, MGMT_FEE_FIELD)
-        carry  = cf_first(cf, CARRY_FIELD)
-        sfee   = cf_first(cf, SELLER_FEE_FIELD)
         fee_section = f'''
       <div class="feebox">
         <h3>SPV terms to confirm</h3>
@@ -257,8 +291,11 @@ def render_loi(deal, person):
       <div class="effdate">{escape(today)}</div>
       <div class="letter">{recital}</div>
       <div class="terms-h">The Terms</div>
+      <div class="termsbox">
       {price_section}
       {fee_section}
+      </div>
+      <div class="letter">{terms_para}</div>
       {sig}
       <button class="signbtn" onclick="alert('Preview only — signing is not wired up yet.');return false;">Click to sign</button>
     </div>
@@ -295,4 +332,7 @@ def lambda_handler(event, context):
         pr = call_pipeline_api("GET", f"/people/{contact_id}.json", jwt)
         if pr["status"] == 200:
             person = pr["data"]
-    return _resp(200, render_loi(deal, person), "text/html")
+    role = params.get("role", "buyer").strip().lower()
+    if role not in ("buyer", "seller"):
+        role = "buyer"
+    return _resp(200, render_loi(deal, person, role), "text/html")
