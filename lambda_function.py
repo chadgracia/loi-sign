@@ -134,14 +134,20 @@ input.feein { width:130px; padding:7px 9px; font-size:14px; text-align:right; }
   padding:7px; font-weight:600; letter-spacing:.03em; }
 """
 
-def render_loi(deal, person, role="buyer"):
+def render_loi(deal, person, role=""):
     cf   = deal.get("custom_fields", {}) or {}
     pcf  = person.get("custom_fields", {}) or {}
 
-    # signer role drives the letter: a buyer signs a Purchase LOI, a seller a Sale LOI.
-    # This is the signer's role, not the deal's listed side — the counterparty who bids
-    # on a Sell Order is a buyer, and a counterparty on a Buy Order is a seller.
-    is_sell     = (role == "seller")
+    # Side follows the deal's own listing (Sell Order -> sale letter, Buy Order -> purchase
+    # letter). An explicit role= overrides it (e.g. the Bid button will pass role=buyer).
+    type_ids     = [int(x) for x in cf_list(cf, DEAL_TYPE_FIELD) if x]
+    deal_is_sell = SELL_TYPE_ID in type_ids
+    if role == "seller":
+        is_sell = True
+    elif role == "buyer":
+        is_sell = False
+    else:
+        is_sell = deal_is_sell
     action_verb = "sell" if is_sell else "purchase"
     action_noun = "Sale" if is_sell else "Purchase"
 
@@ -160,13 +166,17 @@ def render_loi(deal, person, role="buyer"):
     tied = (ps == PRICE_TIED_ID)
 
     security = (deal.get("company") or {}).get("name") or deal.get("company_name") or "—"
-    gross    = fmt_money(cf_first(cf, GROSS_FIELD))
+    price      = fmt_money(cf_first(cf, NET_FIELD if is_sell else GROSS_FIELD))
+    price_word = "net" if is_sell else "gross"
     target   = fmt_money(cf_first(cf, MAX_SIZE_FIELD))
 
     # signer block
     signer_name  = escape(person.get("full_name") or "")
     signer_title = escape(person.get("position") or "")
-    entity       = escape(cf_first(cf, BUYER_ENTITY_FIELD) or person.get("company_name") or "")
+    _entity_raw  = person.get("company_name") if is_sell else (cf_first(cf, BUYER_ENTITY_FIELD) or person.get("company_name"))
+    if _entity_raw and security and _entity_raw.strip().lower() == security.strip().lower():
+        _entity_raw = ""   # a signer's entity should never be the company being traded
+    entity       = escape(_entity_raw or "")
     addr_lines   = address_block(person)
     today        = datetime.datetime.utcnow().strftime("%B %-d, %Y")
 
@@ -206,7 +216,7 @@ def render_loi(deal, person, role="buyer"):
                         "determined upon the closing of the Company&rsquo;s current financing "
                         "round or tender")
     else:
-        price_clause = (f"at a gross price of $<span id=\"tp-price\">{gross or '&mdash;'}</span> "
+        price_clause = (f"at a {price_word} price of $<span id=\"tp-price\">{price or '&mdash;'}</span> "
                         f"per share")
     fee_clause = ""
     if is_spv:
@@ -242,8 +252,8 @@ def render_loi(deal, person, role="buyer"):
         '''
     else:
         price_section = f'''
-      <label>Gross price per share (USD) — current price shown; confirm or adjust</label>
-      <input type="text" name="gross" class="prefill" value="{gross or ''}" oninput="this.classList.remove('prefill');syncTerms()">
+      <label>{price_word.capitalize()} price per share (USD) — current price shown; confirm or adjust</label>
+      <input type="text" name="gross" class="prefill" value="{price or ''}" oninput="this.classList.remove('prefill');syncTerms()">
       <label>Size you intend to {action_verb} (USD)</label>
       {size_input}
       {size_hint}
@@ -301,8 +311,8 @@ def render_loi(deal, person, role="buyer"):
       <div class="letter">{terms_para}</div>
       {sig}
       <div class="signwrap">
-        <div class="sigrule"></div>
         <button class="signbtn" onclick="alert('Preview only — signing is not wired up yet.');return false;">Click to sign</button>
+        <div class="sigrule"></div>
       </div>
     </div>
   </div>
@@ -358,7 +368,7 @@ def lambda_handler(event, context):
         pr = call_pipeline_api("GET", f"/people/{contact_id}.json", jwt)
         if pr["status"] == 200:
             person = pr["data"]
-    role = params.get("role", "buyer").strip().lower()
+    role = params.get("role", "").strip().lower()
     if role not in ("buyer", "seller"):
-        role = "buyer"
+        role = ""   # empty = follow the deal's own side
     return _resp(200, render_loi(deal, person, role), "text/html")
