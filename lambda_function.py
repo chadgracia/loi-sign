@@ -122,10 +122,13 @@ input.feein { width:130px; padding:7px 9px; font-size:14px; text-align:right; }
 .prefill { color:#9aa1ab; }
 .hint { font-size:12px; color:#8a929d; margin-top:6px; }
 .sig { margin-top:26px; border-top:1px dashed #cfd5dd; padding-top:20px; }
-.sig .name { font-size:18px; font-weight:600; }
-.sig .meta { font-size:14px; color:#5b6472; margin-top:2px; line-height:1.45; }
-.signbtn { display:block; width:100%; margin-top:22px; padding:15px; font-size:16px;
-  font-weight:600; color:#fff; background:#1652f0; border:none; border-radius:8px; cursor:pointer; }
+.sig .name { font-size:14px; font-weight:400; color:#1a1a1a; }
+.sig .meta { font-size:14px; color:#5b6472; margin-top:0; line-height:1.45; }
+.signwrap { margin-top:30px; }
+.sigrule { width:220px; border-top:1px solid #1a1a1a; margin-bottom:4px; }
+.signbtn { display:inline-block; background:none; border:none; padding:0 4px; cursor:pointer;
+  font-family:'Snell Roundhand','Segoe Script','Brush Script MT',cursive;
+  font-size:28px; line-height:1; color:#16307a; }
 .foot { padding:14px 28px; font-size:12px; color:#9aa1ab; border-top:1px solid #eef1f5; }
 .preview { background:#fdecef; color:#a01329; font-size:12px; text-align:center;
   padding:7px; font-weight:600; letter-spacing:.03em; }
@@ -208,9 +211,9 @@ def render_loi(deal, person, role="buyer"):
     fee_clause = ""
     if is_spv:
         fee_clause = (f" This price is exclusive of a management fee of "
-                      f"<span id=\"tp-mgmt\">{escape(str(mgmt))}</span>, carried interest of "
-                      f"<span id=\"tp-carry\">{escape(str(carry))}</span>, and a seller fee of "
-                      f"<span id=\"tp-sfee\">{escape(str(sfee))}</span>, in each case before "
+                      f"<span id=\"tp-mgmt\">{escape(str(mgmt))}</span>%, carried interest of "
+                      f"<span id=\"tp-carry\">{escape(str(carry))}</span>%, and a seller fee of "
+                      f"<span id=\"tp-sfee\">{escape(str(sfee))}</span>%, as well as "
                       f"Rainmaker Securities&rsquo; commission.")
     terms_para = f'''
       <p>Accordingly, the {signer_party} proposes to {action_verb} shares of the Company for an
@@ -252,7 +255,6 @@ def render_loi(deal, person, role="buyer"):
         fee_section = f'''
       <div class="feebox">
         <h3>SPV terms to confirm</h3>
-        <div class="note">These amounts are before Rainmaker commission.</div>
         <div class="frow"><span>Management fee</span>
           <input type="text" name="mgmt_fee" class="feein prefill" value="{escape(str(mgmt))}" oninput="this.classList.remove('prefill');syncTerms()"></div>
         <div class="frow"><span>Carry</span>
@@ -273,7 +275,7 @@ def render_loi(deal, person, role="buyer"):
     sig = f'''
       <div class="sig">
         <div class="name">{signer_name}</div>
-        <div class="meta">{meta_line}{('<br>' + addr_html) if addr_html else ''}<br>{today}</div>
+        <div class="meta">{meta_line}{('<br>' + addr_html) if addr_html else ''}</div>
       </div>
     '''
 
@@ -298,10 +300,11 @@ def render_loi(deal, person, role="buyer"):
       </div>
       <div class="letter">{terms_para}</div>
       {sig}
-      <button class="signbtn" onclick="alert('Preview only — signing is not wired up yet.');return false;">Click to sign</button>
+      <div class="signwrap">
+        <div class="sigrule"></div>
+        <button class="signbtn" onclick="alert('Preview only — signing is not wired up yet.');return false;">Click to sign</button>
+      </div>
     </div>
-    <div class="foot">This letter reflects an indication of intent and is not a binding
-    commitment. Party level on file: {escape(party_label)}.</div>
   </div>
   <script>
   function clampMin(el) {{
@@ -311,16 +314,25 @@ def render_loi(deal, person, role="buyer"):
     syncTerms();
   }}
   function syncTerms() {{
-    function put(id, name) {{
+    function grp(s) {{
+      var raw = s.replace(/,/g, '').trim();
+      var n = parseFloat(raw);
+      if (isNaN(n)) return s;
+      if (n === Math.floor(n)) return n.toLocaleString('en-US');
+      return n.toLocaleString('en-US', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+    }}
+    function put(id, name, numeric) {{
       var span = document.getElementById(id);
       var input = document.querySelector('[name="' + name + '"]');
-      if (span && input && input.value.trim() !== '') {{ span.textContent = input.value.trim(); }}
+      if (span && input && input.value.trim() !== '') {{
+        span.textContent = numeric ? grp(input.value) : input.value.trim();
+      }}
     }}
-    put('tp-size', 'size');
-    put('tp-price', 'gross');
-    put('tp-mgmt', 'mgmt_fee');
-    put('tp-carry', 'carry');
-    put('tp-sfee', 'seller_fee');
+    put('tp-size', 'size', true);
+    put('tp-price', 'gross', true);
+    put('tp-mgmt', 'mgmt_fee', false);
+    put('tp-carry', 'carry', false);
+    put('tp-sfee', 'seller_fee', false);
   }}
   </script>
 </body></html>'''
