@@ -61,6 +61,13 @@ STRUCT_PHRASES = {
 # ── Person custom-field IDs ────────────────────────────────────────────────
 TRANSACTOR_TYPE_FIELD = "custom_label_3759163"
 # Transactor types that sign in their own name and use their home address.
+# ── IQF gate (buyers only) ────────────────────────────────────────────────
+IQF_FIELD        = "custom_label_3763008"
+IQF_YES_ID       = 6496840
+IQF_UNNEEDED_ID  = 6596073   # "Unnecessary" — no form required, treat as cleared
+IQF_URL_NATURAL  = "https://www.rainmakersecurities.com/investor-qualification-form-for-natural-persons"
+IQF_URL_ENTITY   = "https://www.rainmakersecurities.com/investor-qualification-form-for-entity-persons"
+
 INDIVIDUAL_TYPE_IDS = {
     6484810,  # Natural Person
     6716196,  # Employee Holder
@@ -324,6 +331,17 @@ def render_loi(deal, person, role="", company=None):
     price_req  = '' if is_spv else ' data-required="1"'
     price_star = '' if is_spv else ' <span class="req">*</span>'
     price_note = " &mdash; current price shown; confirm or adjust" if price else ""
+
+    # IQF gate: buyers only. Yes / Unnecessary clear it; Pending, No or blank do not.
+    # A signer we treat as an individual gets the natural-persons form, everyone else
+    # the entity form.
+    _iqf_raw = cf_first(pcf, IQF_FIELD)
+    try:
+        _iqf_id = int(float(str(_iqf_raw)))
+    except (TypeError, ValueError):
+        _iqf_id = 0
+    iqf_cleared = is_sell or _iqf_id in (IQF_YES_ID, IQF_UNNEEDED_ID)
+    iqf_url     = IQF_URL_NATURAL if is_individual else IQF_URL_ENTITY
     fee_req   = ' data-required="1"'
     fee_star  = ' <span class="req">*</span>'
     fee_heading = "SPV terms" if is_sell else "Max fees you&rsquo;d pay if via SPV"
@@ -433,7 +451,7 @@ def render_loi(deal, person, role="", company=None):
       <div class="letter">{recital}{terms_para}</div>
       {sig}
       <div class="signwrap">
-        <button id="signbtn" class="signbtn" data-side="{side_label}" onclick="return doSign();">Click to sign</button>
+        <button id="signbtn" class="signbtn" data-side="{side_label}" data-iqf="{'1' if iqf_cleared else '0'}" data-iqfurl="{iqf_url}" onclick="return doSign();">Click to sign</button>
         <div class="sigrule"></div>
       </div>
     </div>
@@ -441,8 +459,8 @@ def render_loi(deal, person, role="", company=None):
   <div class="modal" id="thankyou">
     <div class="modalbox">
       <h2>Thank you</h2>
-      <p>Your letter of intent has been received.<br>We&rsquo;ll be in touch shortly.</p>
-      <p style="margin-top:18px;"><a href="{REDIRECT_URL}" style="color:#1652f0;font-weight:600;text-decoration:none;">Continue &rarr;</a></p>
+      <p id="tymsg">Your letter of intent has been received.<br>We&rsquo;ll be in touch shortly.</p>
+      <p style="margin-top:18px;"><a id="tylink" href="{REDIRECT_URL}" style="color:#1652f0;font-weight:600;text-decoration:none;">Continue &rarr;</a></p>
     </div>
   </div>
   <script>
@@ -558,8 +576,18 @@ def render_loi(deal, person, role="", company=None):
     fetch(location.href, {{method: 'POST', body: body,
       headers: {{'Content-Type': 'application/x-www-form-urlencoded'}}}})
       .then(function(r) {{
+        var needIqf = btn.getAttribute('data-iqf') === '0';
+        var dest = needIqf ? btn.getAttribute('data-iqfurl') : '{REDIRECT_URL}';
+        if (needIqf) {{
+          document.getElementById('tymsg').innerHTML =
+            'Your letter of intent has been received.<br>One more step — please complete ' +
+            'your investor qualification form so we can proceed.';
+          var lk = document.getElementById('tylink');
+          lk.href = dest;
+          lk.textContent = 'Continue to the form →';
+        }}
         document.getElementById('thankyou').classList.add('open');
-        setTimeout(function() {{ location.href = '{REDIRECT_URL}'; }}, 3000);
+        setTimeout(function() {{ location.href = dest; }}, 4000);
       }})
       .catch(function() {{ btn.disabled = false; alert('Submission failed — please try again.'); }});
     return false;
