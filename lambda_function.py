@@ -1,9 +1,17 @@
 import json
+import os
 import datetime
 import urllib.request
 import urllib.error
 import boto3
 from html import escape
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
+from fpdf import FPDF
+
+SIG_FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "GreatVibes-Regular.ttf")
 
 # ── Config ────────────────────────────────────────────────────────────────
 LOI_PAGE_KEY  = "loi7q-3f9a-k28p"        # access key for this page (?key=...)
@@ -429,6 +437,7 @@ def render_loi(deal, person, role="", company=None):
     <div class="modalbox">
       <h2>Thank you</h2>
       <p>Your letter of intent has been received.<br>We&rsquo;ll be in touch shortly.</p>
+      <p style="margin-top:18px;"><a href="{REDIRECT_URL}" style="color:#1652f0;font-weight:600;text-decoration:none;">Continue &rarr;</a></p>
     </div>
   </div>
   <script>
@@ -535,6 +544,10 @@ def render_loi(deal, person, role="", company=None):
       mgmt_fee: fieldVal('mgmt_fee'),
       carry: fieldVal('carry'),
       seller_fee: fieldVal('seller_fee'),
+      letter_text: (document.querySelector('.letter') || {{}}).innerText || '',
+      reline: (document.querySelector('.reline') || {{}}).innerText || '',
+      signer_name: (document.querySelector('.sig .name') || {{}}).innerText || '',
+      sig_meta: (document.querySelector('.sig .meta') || {{}}).innerText || '',
     }});
     fetch(location.href, {{method: 'POST', body: body,
       headers: {{'Content-Type': 'application/x-www-form-urlencoded'}}}})
@@ -566,6 +579,84 @@ def send_email(subject, text_body):
             "Body": {"Text": {"Data": text_body}},
         },
     )
+
+def _plain(s):
+    """Times is a latin-1 core font, so fold the typographic characters down."""
+    if s is None:
+        return ""
+    s = str(s)
+    for a, b in (("—", "-"), ("–", "-"), ("‘", "'"), ("’", "'"),
+                 ("“", '"'), ("”", '"'), ("≈", "~"), (" ", " "),
+                 ("…", "..."), ("→", "->")):
+        s = s.replace(a, b)
+    return s.encode("latin-1", "replace").decode("latin-1")
+
+
+def build_loi_pdf(reline, side_label, letter_text, sig_meta, signer_name, audit_line):
+    pdf = FPDF(format="Letter", unit="mm")
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.set_margins(25, 22, 25)
+    pdf.add_page()
+
+    sig_font = None
+    try:
+        pdf.add_font("sig", "", SIG_FONT_PATH)
+        sig_font = "sig"
+    except Exception:
+        sig_font = None   # fall back to Times italic rather than fail the whole PDF
+
+    pdf.set_font("Times", "B", 13)
+    pdf.cell(0, 7, "LETTER OF INTENT", align="C", new_x="LMARGIN", new_y="NEXT")
+    if side_label:
+        pdf.set_font("Times", "", 10)
+        pdf.cell(0, 5, _plain(side_label), align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(7)
+
+    if reline:
+        pdf.set_font("Times", "B", 11)
+        pdf.cell(0, 6, _plain(reline), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(3)
+
+    pdf.set_font("Times", "", 11)
+    for para in [p.strip() for p in (letter_text or "").split("\n") if p.strip()]:
+        pdf.multi_cell(0, 5.6, _plain(para))
+        pdf.ln(2.5)
+
+    pdf.ln(9)
+    if sig_font:
+        pdf.set_font(sig_font, "", 26)
+        pdf.cell(0, 11, signer_name or "", new_x="LMARGIN", new_y="NEXT")
+    else:
+        pdf.set_font("Times", "I", 17)
+        pdf.cell(0, 11, _plain(signer_name or ""), new_x="LMARGIN", new_y="NEXT")
+    y = pdf.get_y()
+    pdf.line(25, y, 100, y)
+    pdf.ln(2)
+
+    pdf.set_font("Times", "", 10)
+    for line in [l.strip() for l in (sig_meta or "").split("\n") if l.strip()]:
+        pdf.cell(0, 5, _plain(line), new_x="LMARGIN", new_y="NEXT")
+
+    pdf.ln(7)
+    pdf.set_font("Times", "", 8)
+    pdf.set_text_color(120, 120, 120)
+    pdf.multi_cell(0, 4, _plain(audit_line))
+    return bytes(pdf.output())
+
+
+def send_email_with_pdf(subject, text_body, pdf_bytes, filename):
+    msg = MIMEMultipart()
+    msg["Subject"] = subject
+    msg["From"]    = SES_SENDER
+    msg["To"]      = CHAD_EMAIL
+    msg.attach(MIMEText(text_body, "plain", "utf-8"))
+    part = MIMEApplication(pdf_bytes, _subtype="pdf")
+    part.add_header("Content-Disposition", "attachment", filename=filename)
+    msg.attach(part)
+    ses = boto3.client("ses", region_name="us-east-1")
+    ses.send_raw_email(Source=SES_SENDER, Destinations=[CHAD_EMAIL],
+                       RawMessage={"Data": msg.as_string()})
+
 
 def handle_sign(event):
     import urllib.parse
@@ -599,8 +690,26 @@ def handle_sign(event):
             f"Carry   : {carry}%",
             f"One-time: {sfee}%",
         ]
+    letter_text = fv("letter_text")
+    reline      = fv("reline")
+    signer_name = fv("signer_name")
+    sig_meta    = fv("sig_meta")
+    security    = reline[3:].strip() if reline.lower().startswith("re:") else reline
+
+    ip = ((event.get("requestContext") or {}).get("http") or {}).get("sourceIp", "unknown")
+    ts = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    lines += ["", f"Signed  : {ts}", f"IP      : {ip}"]
+
+    audit   = (f"Executed electronically on {ts} from IP {ip}. "
+               f"Deal reference {deal_id}.")
     subject = f"LOI signed — {side} — deal {deal_id}"
-    send_email(subject, "\n".join(lines))
+    try:
+        pdf_bytes = build_loi_pdf(reline, side, letter_text, sig_meta, signer_name, audit)
+        fname = _plain(f"LOI - {security or deal_id}.pdf")
+        send_email_with_pdf(subject, "\n".join(lines), pdf_bytes, fname)
+    except Exception as e:
+        # Never lose a submission because the PDF failed — fall back to text only.
+        send_email(subject + " (PDF failed)", "\n".join(lines) + f"\n\nPDF ERROR: {e}")
     return _json(200, {"ok": True})
 
 def lambda_handler(event, context):

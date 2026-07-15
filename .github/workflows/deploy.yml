@@ -10,10 +10,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::271378210266:role/github-actions-deploy
           aws-region: us-east-1
       - run: |
-          zip -j function.zip lambda_function.py
+          rm -rf package function.zip
+          mkdir -p package
+          pip install fpdf2==2.7.9 --target package
+          cp lambda_function.py package/
+          cp GreatVibes-Regular.ttf package/
+          cd package
+          zip -r ../function.zip . -x '*.pyc' '__pycache__/*'
+          cd ..
           aws lambda update-function-code --function-name loi-sign --zip-file fileb://function.zip
