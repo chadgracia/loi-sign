@@ -24,10 +24,19 @@ PRICE_STATUS_FIELD = "custom_label_3938750"
 BUYER_ENTITY_FIELD = "custom_label_3805785"
 
 SELL_TYPE_ID        = 5011675
-SPV_STRUCTURE_ID    = 5077906
+SPV_STRUCTURE_ID    = 5077906   # labeled "Fund" in the CRM
 DIRECT_STRUCTURE_ID = 6250090
+FORWARD_STRUCTURE_ID = 5077903
 PRICE_FIRM_ID       = 7000238
 PRICE_TIED_ID       = 7000239
+
+# Structure entry ID -> phrase used in the letter. Unknown (6361933) and None (5077909)
+# are intentionally absent: they add no clause.
+STRUCT_PHRASES = {
+    6250090: "direct transfer",
+    5077906: "fund interest",
+    5077903: "forward",
+}
 
 # ── Person custom-field IDs ────────────────────────────────────────────────
 INVESTOR_LEVEL_FIELD = "custom_label_3923758"
@@ -167,7 +176,8 @@ def render_loi(deal, person, role=""):
         ps = None
     tied = (ps == PRICE_TIED_ID)
 
-    security = (deal.get("company") or {}).get("name") or deal.get("company_name") or "—"
+    security   = (deal.get("company") or {}).get("name") or deal.get("company_name") or "—"
+    side_label = "Sellside" if is_sell else "Buyside"
     price      = fmt_money(cf_first(cf, NET_FIELD if is_sell else GROSS_FIELD))
     price_word = "net" if is_sell else "gross"
     target   = fmt_money(cf_first(cf, MAX_SIZE_FIELD))
@@ -180,7 +190,9 @@ def render_loi(deal, person, role=""):
         _entity_raw = ""   # a signer's entity should never be the company being traded
     entity       = escape(_entity_raw or "")
     addr_lines   = address_block(person)
-    today        = datetime.datetime.utcnow().strftime("%B %-d, %Y")
+    _now         = datetime.datetime.utcnow()
+    today        = _now.strftime("%B %-d, %Y")
+    expiry       = (_now + datetime.timedelta(days=30)).strftime("%B %-d, %Y")
 
     # investor-level party label (used later on the seller notice; shown here for reference)
     inv = cf_first(pcf, INVESTOR_LEVEL_FIELD)
@@ -189,18 +201,20 @@ def render_loi(deal, person, role=""):
     # ── letter recital (side-aware) ──
     entity_or_name = entity or signer_name or "_____"
     if is_sell:
-        txn_lc         = "sale"
-        signer_party   = "Seller"
-        counter_clause = "to the Purchaser"
+        txn_lc       = "sale"
+        signer_party = "Seller"
     else:
-        txn_lc         = "purchase"
-        signer_party   = "Purchaser"
-        counter_clause = "from the Seller"
+        txn_lc       = "purchase"
+        signer_party = "Purchaser"
+
+    # Structure clause: "via direct transfer", "via fund interest or forward", etc.
+    _phrases = [STRUCT_PHRASES[i] for i in struct_ids if i in STRUCT_PHRASES]
+    struct_clause = (" via " + " or ".join(_phrases)) if _phrases else ""
 
     recital = f'''
       <p>This Letter of Intent, dated as of {escape(today)} (the &ldquo;Effective Date&rdquo;),
       sets forth the principal terms of the {txn_lc} of shares in {escape(security)}
-      (the &ldquo;Company&rdquo;) by {entity_or_name} (&ldquo;{signer_party}&rdquo;) {counter_clause}.
+      (the &ldquo;Company&rdquo;) by {entity_or_name} (&ldquo;{signer_party}&rdquo;){struct_clause}.
       The {signer_party} intends to be, and is, bound by the terms set forth herein.
       This letter shall be superseded in its entirety by any transfer notice or share purchase
       agreement subsequently executed between the parties, the terms of which shall control.</p>
@@ -230,7 +244,9 @@ def render_loi(deal, person, role=""):
     terms_para = f'''
       <p>Accordingly, the {signer_party} proposes to {action_verb} shares of the Company for an
       {consideration} of up to $<span id="tp-size">{target or '&mdash;'}</span>,
-      {price_clause}.{fee_clause}</p>
+      {price_clause}.{fee_clause} The terms set forth herein shall remain open for acceptance
+      until {escape(expiry)}, after which this letter expires automatically without further
+      action by either party.</p>
     '''
 
     # ── price / size entry ──
@@ -246,7 +262,7 @@ def render_loi(deal, person, role=""):
         except (TypeError, ValueError):
             min_raw = 0
         min_disp = fmt_money(cf_first(cf, MIN_SIZE_FIELD)) or ""
-    size_hint = (f'<div class="hint">Minimum: ${min_disp}. You can increase but not go below.</div>'
+    size_hint = (f'<div class="hint" style="margin-bottom:14px;">Minimum: ${min_disp}.</div>'
                  if min_disp else '')
     size_input = (f'<input type="text" name="size" class="prefill" value="{min_disp}"{buyer_req} '
                   f'data-min="{min_raw}" oninput="this.classList.remove(\'prefill\');syncTerms()" '
@@ -306,18 +322,17 @@ def render_loi(deal, person, role=""):
   <div class="preview">PREVIEW — layout only, nothing is saved or sent</div>
   <div class="wrap">
     <div class="head">
-      <h1>Letter of Intent</h1>
+      <h1>Letter of Intent &mdash; {side_label}</h1>
       <div class="rule"></div>
     </div>
     <div class="body">
       <div class="effdate">{escape(today)}</div>
-      <div class="letter">{recital}</div>
       <div class="terms-h">The Terms</div>
       <div class="termsbox">
       {price_section}
       {fee_section}
       </div>
-      <div class="letter">{terms_para}</div>
+      <div class="letter">{recital}{terms_para}</div>
       {sig}
       <div class="signwrap">
         <button class="signbtn" onclick="if(!validateReq())return false;alert('Preview only — signing is not wired up yet.');return false;">Click to sign</button>
