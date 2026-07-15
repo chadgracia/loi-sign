@@ -40,7 +40,13 @@ STRUCT_PHRASES = {
 
 # ── Person custom-field IDs ────────────────────────────────────────────────
 TRANSACTOR_TYPE_FIELD = "custom_label_3759163"
-NATURAL_PERSON_ID     = 6484810
+# Transactor types that sign in their own name and use their home address.
+INDIVIDUAL_TYPE_IDS = {
+    6484810,  # Natural Person
+    6716196,  # Employee Holder
+    6892622,  # Employee Holder - VIP
+    6484809,  # Ex-Employee Holder
+}
 INVESTOR_LEVEL_FIELD = "custom_label_3923758"
 QP_ID                = 6950564
 
@@ -82,13 +88,20 @@ def fmt_money(v):
     except (TypeError, ValueError):
         return None
 
-def address_block(person, is_natural=False):
-    if is_natural:
+def address_block(person, is_individual=False):
+    if is_individual:
         line1   = person.get("home_address_1")
         city    = person.get("home_city")
         state   = person.get("home_state")
         postal  = person.get("home_postal_code")
         country = person.get("home_country")
+        # If no home address is on file, fall back to work rather than render blank.
+        if not any([line1, city, postal, country]):
+            line1   = person.get("work_address_1")   or person.get("company_address_1")
+            city    = person.get("work_city")        or person.get("company_city")
+            state   = person.get("work_state")       or person.get("company_state")
+            postal  = person.get("work_postal_code") or person.get("company_postal_code")
+            country = person.get("work_country")     or person.get("company_country")
     else:
         line1   = person.get("work_address_1")   or person.get("company_address_1")
         city    = person.get("work_city")        or person.get("company_city")
@@ -118,7 +131,7 @@ body { margin:0; background:#f4f5f7; color:#1a1a1a;
   text-transform:uppercase; color:#0f1e35; }
 .head .rule { height:2px; background:#0f1e35; width:48px; margin:12px auto 0; }
 .body { padding:22px 40px 30px; }
-.effdate { text-align:right; font-size:14px; color:#3a4350; margin:0 0 22px; }
+.reline { font-size:15px; font-weight:600; color:#1a1a1a; margin:0 0 20px; }
 .letter { font-size:15px; line-height:1.65; color:#1a1a1a; }
 .letter p { margin:0 0 18px; }
 .terms-h { font-size:13px; text-transform:uppercase; letter-spacing:.09em;
@@ -200,11 +213,14 @@ def render_loi(deal, person, role=""):
     # Party display: a Natural Person signs in their own name and shows their home address;
     # any entity type signs in the company's name and shows the work address.
     transactor    = cf_first(pcf, TRANSACTOR_TYPE_FIELD)
-    is_natural    = str(transactor) == str(NATURAL_PERSON_ID)
+    try:
+        is_individual = int(float(str(transactor))) in INDIVIDUAL_TYPE_IDS
+    except (TypeError, ValueError):
+        is_individual = False
     company_nm    = escape(person.get("company_name") or "")
-    party_display = signer_name if is_natural else (company_nm or signer_name)
-    entity        = "" if is_natural else company_nm
-    addr_lines    = address_block(person, is_natural)
+    party_display = signer_name if is_individual else (company_nm or signer_name)
+    entity        = "" if is_individual else company_nm
+    addr_lines    = address_block(person, is_individual)
     _now         = datetime.datetime.utcnow()
     today        = _now.strftime("%B %-d, %Y")
 
@@ -231,7 +247,7 @@ def render_loi(deal, person, role=""):
       sets forth the principal terms of the {txn_lc} of shares in {escape(security)}
       (the &ldquo;Company&rdquo;) by {entity_or_name} (&ldquo;{signer_party}&rdquo;){struct_clause}.
       This letter shall be superseded in its entirety by any transfer notice, share purchase
-      agreement, subscription document or any other agreement subsequently executed between
+      agreement, subscription document or other agreement subsequently executed between
       the parties, the terms of which shall control.</p>
     '''
 
@@ -251,9 +267,9 @@ def render_loi(deal, person, role=""):
                         f"per share")
     fee_clause = ""
     if is_spv:
-        fee_clause = (f" This price is exclusive of a management fee of "
+        fee_clause = (f" If via fund, this price is exclusive of a management fee of "
                       f"<span id=\"tp-mgmt\">{escape(str(mgmt))}</span>%, carried interest of "
-                      f"<span id=\"tp-carry\">{escape(str(carry))}</span>%, and a seller fee of "
+                      f"<span id=\"tp-carry\">{escape(str(carry))}</span>%, and a one-time fee of "
                       f"<span id=\"tp-sfee\">{escape(str(sfee))}</span>%, as well as "
                       f"Rainmaker Securities&rsquo; commission.")
     terms_para = f'''
@@ -280,7 +296,7 @@ def render_loi(deal, person, role=""):
     exp_input = ('<label>This letter remains open for</label>'
                  '<div class="dayrow"><input type="text" name="expdays" value="" maxlength="3" '
                  'oninput="syncTerms()"><span class="dayunit">days</span></div>'
-                 '<div class="hint">If empty, good till filled.</div>')
+                 '<div class="hint" style="margin-bottom:14px;">If empty, good till filled.</div>')
     size_input = (f'<input type="text" name="size" class="prefill" value="{min_disp}"{buyer_req} '
                   f'data-min="{min_raw}" oninput="this.classList.remove(\'prefill\');syncTerms()" '
                   f'onblur="clampMin(this)">')
@@ -308,12 +324,12 @@ def render_loi(deal, person, role=""):
     if is_spv:
         fee_section = f'''
       <div class="feebox">
-        <h3>SPV terms to confirm</h3>
+        <h3>Max fees you&rsquo;d pay</h3>
         <div class="frow"><span>Management fee{req_star}</span>
           <input type="text" name="mgmt_fee" class="feein prefill" value="{escape(str(mgmt))}"{buyer_req} oninput="this.classList.remove('prefill');syncTerms()"></div>
         <div class="frow"><span>Carry{req_star}</span>
           <input type="text" name="carry" class="feein prefill" value="{escape(str(carry))}"{buyer_req} oninput="this.classList.remove('prefill');syncTerms()"></div>
-        <div class="frow"><span>Seller fee</span>
+        <div class="frow"><span>One-time fee</span>
           <input type="text" name="seller_fee" class="feein prefill" value="{escape(str(sfee))}" oninput="this.classList.remove('prefill');syncTerms()"></div>
       </div>
         '''
@@ -345,7 +361,7 @@ def render_loi(deal, person, role=""):
       <div class="rule"></div>
     </div>
     <div class="body">
-      <div class="effdate">{escape(today)}</div>
+      <div class="reline">Re: {escape(security)}</div>
       <div class="terms-h">The Terms</div>
       <div class="termsbox">
       {price_section}
