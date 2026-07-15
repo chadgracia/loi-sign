@@ -39,6 +39,8 @@ STRUCT_PHRASES = {
 }
 
 # ── Person custom-field IDs ────────────────────────────────────────────────
+TRANSACTOR_TYPE_FIELD = "custom_label_3759163"
+NATURAL_PERSON_ID     = 6484810
 INVESTOR_LEVEL_FIELD = "custom_label_3923758"
 QP_ID                = 6950564
 
@@ -80,12 +82,19 @@ def fmt_money(v):
     except (TypeError, ValueError):
         return None
 
-def address_block(person):
-    line1   = person.get("work_address_1")   or person.get("company_address_1")
-    city    = person.get("work_city")        or person.get("company_city")
-    state   = person.get("work_state")       or person.get("company_state")
-    postal  = person.get("work_postal_code") or person.get("company_postal_code")
-    country = person.get("work_country")     or person.get("company_country")
+def address_block(person, is_natural=False):
+    if is_natural:
+        line1   = person.get("home_address_1")
+        city    = person.get("home_city")
+        state   = person.get("home_state")
+        postal  = person.get("home_postal_code")
+        country = person.get("home_country")
+    else:
+        line1   = person.get("work_address_1")   or person.get("company_address_1")
+        city    = person.get("work_city")        or person.get("company_city")
+        state   = person.get("work_state")       or person.get("company_state")
+        postal  = person.get("work_postal_code") or person.get("company_postal_code")
+        country = person.get("work_country")     or person.get("company_country")
     lines = []
     if line1:
         lines.append(line1)
@@ -132,9 +141,12 @@ input.feein { width:130px; padding:7px 9px; font-size:14px; text-align:right; }
 .hint { font-size:12px; color:#8a929d; margin-top:6px; }
 .req { color:#c0392b; font-weight:700; }
 input.invalid { border-color:#c0392b; background:#fdecef; }
-.sig { margin-top:26px; border-top:1px dashed #cfd5dd; padding-top:20px; }
-.sig .name { font-size:14px; font-weight:400; color:#1a1a1a; }
-.sig .meta { font-size:14px; color:#5b6472; margin-top:0; line-height:1.45; }
+.dayrow { display:flex; align-items:center; gap:8px; }
+.dayrow input[type=text] { width:56px; text-align:center; padding:8px 6px; }
+.dayunit { font-size:14px; color:#5b6472; }
+.sig { margin-top:26px; }
+.sig .name { font-size:15px; font-weight:400; color:#1a1a1a; line-height:1.65; }
+.sig .meta { font-size:15px; color:#1a1a1a; margin-top:0; line-height:1.65; }
 .signwrap { margin-top:30px; }
 .sigrule { width:220px; border-top:1px solid #1a1a1a; margin-bottom:4px; }
 .signbtn { display:inline-block; background:none; border:none; padding:0 4px; cursor:pointer;
@@ -185,11 +197,14 @@ def render_loi(deal, person, role=""):
     # signer block
     signer_name  = escape(person.get("full_name") or "")
     signer_title = escape(person.get("position") or "")
-    _entity_raw  = person.get("company_name") if is_sell else (cf_first(cf, BUYER_ENTITY_FIELD) or person.get("company_name"))
-    if _entity_raw and security and _entity_raw.strip().lower() == security.strip().lower():
-        _entity_raw = ""   # a signer's entity should never be the company being traded
-    entity       = escape(_entity_raw or "")
-    addr_lines   = address_block(person)
+    # Party display: a Natural Person signs in their own name and shows their home address;
+    # any entity type signs in the company's name and shows the work address.
+    transactor    = cf_first(pcf, TRANSACTOR_TYPE_FIELD)
+    is_natural    = str(transactor) == str(NATURAL_PERSON_ID)
+    company_nm    = escape(person.get("company_name") or "")
+    party_display = signer_name if is_natural else (company_nm or signer_name)
+    entity        = "" if is_natural else company_nm
+    addr_lines    = address_block(person, is_natural)
     _now         = datetime.datetime.utcnow()
     today        = _now.strftime("%B %-d, %Y")
 
@@ -199,7 +214,7 @@ def render_loi(deal, person, role=""):
     party_label = "Qualified Purchaser" if str(inv) == str(QP_ID) else ("Seller" if is_sell else "Buyer")
 
     # ── letter recital (side-aware) ──
-    entity_or_name = entity or signer_name or "_____"
+    entity_or_name = party_display or signer_name or "_____"
     if is_sell:
         txn_lc       = "sale"
         signer_party = "Seller"
@@ -215,9 +230,9 @@ def render_loi(deal, person, role=""):
       <p>This Letter of Intent, dated as of {escape(today)} (the &ldquo;Effective Date&rdquo;),
       sets forth the principal terms of the {txn_lc} of shares in {escape(security)}
       (the &ldquo;Company&rdquo;) by {entity_or_name} (&ldquo;{signer_party}&rdquo;){struct_clause}.
-      The {signer_party} intends to be, and is, bound by the terms set forth herein.
-      This letter shall be superseded in its entirety by any transfer notice or share purchase
-      agreement subsequently executed between the parties, the terms of which shall control.</p>
+      This letter shall be superseded in its entirety by any transfer notice, share purchase
+      agreement, subscription document or any other agreement subsequently executed between
+      the parties, the terms of which shall control.</p>
     '''
 
     # fee values (used by both the editable box and the closing terms paragraph)
@@ -263,7 +278,7 @@ def render_loi(deal, person, role=""):
     size_hint = (f'<div class="hint" style="margin-bottom:14px;">Minimum: ${min_disp}.</div>'
                  if min_disp else '')
     exp_input = ('<label>This letter remains open for</label>'
-                 '<div class="dayrow"><input type="text" name="expdays" value="" '
+                 '<div class="dayrow"><input type="text" name="expdays" value="" maxlength="3" '
                  'oninput="syncTerms()"><span class="dayunit">days</span></div>'
                  '<div class="hint">If empty, good till filled.</div>')
     size_input = (f'<input type="text" name="size" class="prefill" value="{min_disp}"{buyer_req} '
@@ -396,7 +411,7 @@ def render_loi(deal, person, role=""):
     d.setDate(d.getDate() + n);
     var txt = d.toLocaleDateString('en-US', {{year: 'numeric', month: 'long', day: 'numeric'}});
     span.textContent = ' The terms set forth herein shall remain open for acceptance until ' +
-      txt + ', after which this letter expires automatically without further action by either party.';
+      txt + ', after which this letter expires automatically without further action.';
   }}
   </script>
 </body></html>'''
