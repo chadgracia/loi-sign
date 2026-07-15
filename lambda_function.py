@@ -23,6 +23,10 @@ STRUCTURE_FIELD    = "custom_label_3064360"
 PRICE_STATUS_FIELD = "custom_label_3938750"
 BUYER_ENTITY_FIELD = "custom_label_3805785"
 
+# ── Company custom-field IDs (last-round data, for the implied valuation) ──
+COMPANY_PPS_FIELD = "custom_label_3064363"   # LR PPS
+COMPANY_VAL_FIELD = "custom_label_3790429"   # LR Val ($Bn)
+
 SELL_TYPE_ID        = 5011675
 SPV_STRUCTURE_ID    = 5077906   # labeled "Fund" in the CRM
 DIRECT_STRUCTURE_ID = 6250090
@@ -157,6 +161,9 @@ input.invalid { border-color:#c0392b; background:#fdecef; }
 .dayrow { display:flex; align-items:center; gap:8px; }
 .dayrow input[type=text] { width:56px; text-align:center; padding:8px 6px; }
 .dayunit { font-size:14px; color:#5b6472; }
+.valbox { margin:6px 0 14px; }
+#valtext { font-size:14px; font-weight:600; color:#0f1e35; }
+.valnote { font-size:12px; color:#8a929d; margin-top:2px; }
 .sig { margin-top:26px; }
 .sig .name { font-size:15px; font-weight:400; color:#1a1a1a; line-height:1.65; }
 .sig .meta { font-size:15px; color:#1a1a1a; margin-top:0; line-height:1.65; }
@@ -170,7 +177,7 @@ input.invalid { border-color:#c0392b; background:#fdecef; }
   padding:7px; font-weight:600; letter-spacing:.03em; }
 """
 
-def render_loi(deal, person, role=""):
+def render_loi(deal, person, role="", company=None):
     cf   = deal.get("custom_fields", {}) or {}
     pcf  = person.get("custom_fields", {}) or {}
 
@@ -294,6 +301,25 @@ def render_loi(deal, person, role=""):
     # know it yet, so it stays optional and the letter falls back to round-based wording.
     price_req  = '' if is_spv else ' data-required="1"'
     price_star = '' if is_spv else ' <span class="req">*</span>'
+    price_note = " &mdash; current price shown; confirm or adjust" if price else ""
+
+    # Implied valuation from the last public round: val = lr_val * (price / lr_pps).
+    # Same formula the public trades page uses. Hidden entirely if either field is missing.
+    ccf = (company or {}).get("custom_fields", {}) or {}
+    try:
+        lr_pps_f = float(str(cf_first(ccf, COMPANY_PPS_FIELD)).replace(",", ""))
+    except (TypeError, ValueError):
+        lr_pps_f = 0.0
+    try:
+        lr_val_f = float(str(cf_first(ccf, COMPANY_VAL_FIELD)).replace(",", ""))
+    except (TypeError, ValueError):
+        lr_val_f = 0.0
+    val_html = ""
+    if lr_pps_f > 0 and lr_val_f > 0:
+        val_html = (f'<div class="valbox" id="valbox" data-pps="{lr_pps_f}" '
+                    f'data-val="{lr_val_f}" style="display:none;">'
+                    f'<span id="valtext"></span>'
+                    f'<div class="valnote">Valuation based on last public round.</div></div>')
     if is_sell:
         min_raw  = FIRM_MIN
         min_disp = "100,000"
@@ -323,8 +349,9 @@ def render_loi(deal, person, role=""):
         '''
     else:
         price_section = f'''
-      <label>{price_word.capitalize()} price per share (USD){price_star} — current price shown; confirm or adjust</label>
+      <label>{price_word.capitalize()} price per share (USD){price_star}{price_note}</label>
       <input type="text" name="gross" class="prefill" value="{price or ''}"{price_req} oninput="this.classList.remove('prefill');syncTerms()">
+      {val_html}
       <label>Size you intend to {action_verb} (USD){req_star}</label>
       {size_input}
       {size_hint}
@@ -439,6 +466,7 @@ def render_loi(deal, person, role=""):
     }} else {{
       span.innerHTML = 'at a ' + word + ' price of $' + grp(raw) + ' per share';
     }}
+    syncVal();
   }}
   function syncExpiry() {{
     var span = document.getElementById('tp-expclause');
@@ -456,6 +484,22 @@ def render_loi(deal, person, role=""):
     span.textContent = ' The terms set forth herein shall remain open for acceptance until ' +
       txt + ', after which this letter expires automatically without further action.';
   }}
+  function syncVal() {{
+    var box = document.getElementById('valbox');
+    var input = document.querySelector('[name="gross"]');
+    if (!box || !input) return;
+    var pps = parseFloat(box.getAttribute('data-pps'));
+    var val = parseFloat(box.getAttribute('data-val'));
+    var raw = parseFloat((input.value || '').replace(/,/g, '').trim());
+    if (isNaN(raw) || raw <= 0 || !pps || !val) {{
+      box.style.display = 'none';
+      return;
+    }}
+    box.style.display = 'block';
+    document.getElementById('valtext').innerHTML =
+      '&asymp; $' + (val * raw / pps).toFixed(1) + 'Bn valuation';
+  }}
+  syncTerms();
   </script>
 </body></html>'''
 
@@ -480,7 +524,13 @@ def lambda_handler(event, context):
         pr = call_pipeline_api("GET", f"/people/{contact_id}.json", jwt)
         if pr["status"] == 200:
             person = pr["data"]
+    company = {}
+    comp_id = (deal.get("company") or {}).get("id")
+    if comp_id:
+        cr = call_pipeline_api("GET", f"/companies/{comp_id}.json", jwt)
+        if cr["status"] == 200:
+            company = cr["data"]
     role = params.get("role", "").strip().lower()
     if role not in ("buyer", "seller"):
         role = ""   # empty = follow the deal's own side
-    return _resp(200, render_loi(deal, person, role), "text/html")
+    return _resp(200, render_loi(deal, person, role, company), "text/html")
