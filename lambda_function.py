@@ -8,6 +8,9 @@ from html import escape
 # ── Config ────────────────────────────────────────────────────────────────
 LOI_PAGE_KEY  = "loi7q-3f9a-k28p"        # access key for this page (?key=...)
 PIPELINE_BASE = "https://api.pipelinecrm.com/api/v3"
+SES_SENDER    = "agent@agent.graciagroup.com"
+CHAD_EMAIL    = "cgracia@rainmakersecurities.com"
+REDIRECT_URL  = "https://www.graciagroup.com"
 
 # ── Deal custom-field IDs (authoritative — from deal-update-form) ──────────
 GROSS_FIELD        = "custom_label_3064339"
@@ -173,8 +176,14 @@ input.invalid { border-color:#c0392b; background:#fdecef; }
   font-family:'Snell Roundhand','Segoe Script','Brush Script MT',cursive;
   font-size:28px; line-height:1; color:#16307a; }
 .foot { padding:14px 28px; font-size:12px; color:#9aa1ab; border-top:1px solid #eef1f5; }
-.preview { background:#fdecef; color:#a01329; font-size:12px; text-align:center;
-  padding:7px; font-weight:600; letter-spacing:.03em; }
+.modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:100;
+  align-items:center; justify-content:center; }
+.modal.open { display:flex; }
+.modalbox { background:#fff; border-radius:12px; padding:36px 32px; max-width:380px;
+  text-align:center; box-shadow:0 8px 32px rgba(0,0,0,.18); }
+.modalbox h2 { margin:0 0 12px; font-size:18px; color:#0f1e35; }
+.modalbox p { margin:0; font-size:14px; color:#5b6472; line-height:1.6; }
+.signbtn:disabled { opacity:.45; cursor:not-allowed; }
 """
 
 def render_loi(deal, person, role="", company=None):
@@ -272,12 +281,12 @@ def render_loi(deal, person, role="", company=None):
     else:
         _spv_flag = "1" if is_spv else "0"
         if price:
-            _inner = f"at a {price_word} price of ${price} per share"
+            _inner = f"at a {price_word} price up to ${price} per share"
         elif is_spv:
             _inner = ("at a net per-share price to be determined by the results of the "
                       "Company&rsquo;s current financing round")
         else:
-            _inner = f"at a {price_word} price of $&mdash; per share"
+            _inner = f"at a {price_word} price up to $&mdash; per share"
         price_clause = (f'<span id="tp-priceclause" data-word="{price_word}" '
                         f'data-spv="{_spv_flag}">{_inner}</span>')
     fee_clause = ""
@@ -302,6 +311,9 @@ def render_loi(deal, person, role="", company=None):
     price_req  = '' if is_spv else ' data-required="1"'
     price_star = '' if is_spv else ' <span class="req">*</span>'
     price_note = " &mdash; current price shown; confirm or adjust" if price else ""
+    fee_req   = ' data-required="1"'
+    fee_star  = ' <span class="req">*</span>'
+    fee_heading = "SPV terms" if is_sell else "Max fees you&rsquo;d pay if via SPV"
 
     # Implied valuation from the last public round: val = lr_val * (price / lr_pps).
     # Same formula the public trades page uses. Hidden entirely if either field is missing.
@@ -363,13 +375,13 @@ def render_loi(deal, person, role="", company=None):
     if is_spv:
         fee_section = f'''
       <div class="feebox">
-        <h3>Max fees you&rsquo;d pay if via SPV</h3>
-        <div class="frow"><span>Management fee{req_star}</span>
-          <input type="text" name="mgmt_fee" class="feein prefill" value="{escape(str(mgmt))}"{buyer_req} oninput="this.classList.remove('prefill');syncTerms()"></div>
-        <div class="frow"><span>Carry{req_star}</span>
-          <input type="text" name="carry" class="feein prefill" value="{escape(str(carry))}"{buyer_req} oninput="this.classList.remove('prefill');syncTerms()"></div>
-        <div class="frow"><span>One-time fee{req_star}</span>
-          <input type="text" name="seller_fee" class="feein prefill" value="{escape(str(sfee))}"{buyer_req} oninput="this.classList.remove('prefill');syncTerms()"></div>
+        <h3>{fee_heading}</h3>
+        <div class="frow"><span>Management fee{fee_star}</span>
+          <input type="text" name="mgmt_fee" class="feein prefill" value="{escape(str(mgmt))}"{fee_req} oninput="this.classList.remove('prefill');syncTerms()"></div>
+        <div class="frow"><span>Carry{fee_star}</span>
+          <input type="text" name="carry" class="feein prefill" value="{escape(str(carry))}"{fee_req} oninput="this.classList.remove('prefill');syncTerms()"></div>
+        <div class="frow"><span>One-time fee{fee_star}</span>
+          <input type="text" name="seller_fee" class="feein prefill" value="{escape(str(sfee))}"{fee_req} oninput="this.classList.remove('prefill');syncTerms()"></div>
       </div>
         '''
 
@@ -393,7 +405,6 @@ def render_loi(deal, person, role="", company=None):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Letter of Intent</title><style>{PAGE_CSS}</style></head>
 <body>
-  <div class="preview">PREVIEW — layout only, nothing is saved or sent</div>
   <div class="wrap">
     <div class="head">
       <h1>Letter of Intent &mdash; {side_label}</h1>
@@ -409,9 +420,15 @@ def render_loi(deal, person, role="", company=None):
       <div class="letter">{recital}{terms_para}</div>
       {sig}
       <div class="signwrap">
-        <button class="signbtn" onclick="if(!validateReq())return false;alert('Preview only — signing is not wired up yet.');return false;">Click to sign</button>
+        <button id="signbtn" class="signbtn" data-side="{side_label}" onclick="return doSign();">Click to sign</button>
         <div class="sigrule"></div>
       </div>
+    </div>
+  </div>
+  <div class="modal" id="thankyou">
+    <div class="modalbox">
+      <h2>Thank you</h2>
+      <p>Your letter of intent has been received.<br>We&rsquo;ll be in touch shortly.</p>
     </div>
   </div>
   <script>
@@ -462,9 +479,9 @@ def render_loi(deal, person, role="", company=None):
     if (raw === '') {{
       span.innerHTML = spv
         ? 'at a net per-share price to be determined by the results of the Company&rsquo;s current financing round'
-        : 'at a ' + word + ' price of $&mdash; per share';
+        : 'at a ' + word + ' price up to $&mdash; per share';
     }} else {{
-      span.innerHTML = 'at a ' + word + ' price of $' + grp(raw) + ' per share';
+      span.innerHTML = 'at a ' + word + ' price up to $' + grp(raw) + ' per share';
     }}
     syncVal();
   }}
@@ -499,6 +516,35 @@ def render_loi(deal, person, role="", company=None):
     document.getElementById('valtext').innerHTML =
       '&asymp; $' + (val * raw / pps).toFixed(1) + 'Bn valuation';
   }}
+  function fieldVal(name) {{
+    var el = document.querySelector('[name="' + name + '"]');
+    return el ? el.value.trim() : '';
+  }}
+  function doSign() {{
+    if (!validateReq()) return false;
+    var btn = document.getElementById('signbtn');
+    btn.disabled = true;
+    var body = new URLSearchParams({{
+      key: new URLSearchParams(location.search).get('key') || '',
+      deal_id: new URLSearchParams(location.search).get('deal_id') || '',
+      role: new URLSearchParams(location.search).get('role') || '',
+      side: btn.getAttribute('data-side') || '',
+      gross: fieldVal('gross'),
+      size: fieldVal('size'),
+      expdays: fieldVal('expdays'),
+      mgmt_fee: fieldVal('mgmt_fee'),
+      carry: fieldVal('carry'),
+      seller_fee: fieldVal('seller_fee'),
+    }});
+    fetch(location.href, {{method: 'POST', body: body,
+      headers: {{'Content-Type': 'application/x-www-form-urlencoded'}}}})
+      .then(function(r) {{
+        document.getElementById('thankyou').classList.add('open');
+        setTimeout(function() {{ location.href = '{REDIRECT_URL}'; }}, 3000);
+      }})
+      .catch(function() {{ btn.disabled = false; alert('Submission failed — please try again.'); }});
+    return false;
+  }}
   syncTerms();
   </script>
 </body></html>'''
@@ -506,10 +552,64 @@ def render_loi(deal, person, role="", company=None):
 def _resp(code, body, ctype):
     return {"statusCode": code, "headers": {"Content-Type": ctype}, "body": body}
 
+def _json(code, obj):
+    return {"statusCode": code, "headers": {"Content-Type": "application/json"},
+            "body": json.dumps(obj)}
+
+def send_email(subject, text_body):
+    ses = boto3.client("ses", region_name="us-east-1")
+    ses.send_email(
+        Source=SES_SENDER,
+        Destination={"ToAddresses": [CHAD_EMAIL]},
+        Message={
+            "Subject": {"Data": subject},
+            "Body": {"Text": {"Data": text_body}},
+        },
+    )
+
+def handle_sign(event):
+    import urllib.parse
+    raw = event.get("body") or ""
+    if event.get("isBase64Encoded"):
+        import base64
+        raw = base64.b64decode(raw).decode()
+    fields = urllib.parse.parse_qs(raw, keep_blank_values=True)
+    def fv(k):
+        return (fields.get(k) or [""])[0].strip()
+    deal_id  = fv("deal_id")
+    role     = fv("role")
+    side     = fv("side")
+    gross    = fv("gross")
+    size     = fv("size")
+    expdays  = fv("expdays")
+    mgmt_fee = fv("mgmt_fee")
+    carry    = fv("carry")
+    sfee     = fv("seller_fee")
+    lines = [
+        f"LOI signed — {side}",
+        f"Deal ID : {deal_id}",
+        f"Role    : {role or side}",
+        f"Price   : ${gross}/sh" if gross else "Price   : (not specified)",
+        f"Size    : ${size}" if size else "Size    : (not specified)",
+        f"Expiry  : {expdays} days" if expdays else "Expiry  : open",
+    ]
+    if mgmt_fee or carry or sfee:
+        lines += [
+            f"Mgmt fee: {mgmt_fee}%",
+            f"Carry   : {carry}%",
+            f"One-time: {sfee}%",
+        ]
+    subject = f"LOI signed — {side} — deal {deal_id}"
+    send_email(subject, "\n".join(lines))
+    return _json(200, {"ok": True})
+
 def lambda_handler(event, context):
     params = (event.get("queryStringParameters") or {})
     if params.get("key", "") != LOI_PAGE_KEY:
         return _resp(403, "forbidden", "text/plain")
+    if event.get("requestContext", {}).get("http", {}).get("method", "").upper() == "POST" or \
+       event.get("httpMethod", "").upper() == "POST":
+        return handle_sign(event)
     deal_id = params.get("deal_id", "")
     if not deal_id:
         return _resp(400, "missing deal_id", "text/plain")
