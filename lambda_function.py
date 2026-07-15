@@ -1,5 +1,8 @@
 import json
 import os
+import hmac
+import base64
+import hashlib
 import datetime
 import urllib.request
 import urllib.error
@@ -14,7 +17,9 @@ SIG_FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "GreatVibes-Regular.ttf")
 
 # ── Config ────────────────────────────────────────────────────────────────
-LOI_PAGE_KEY  = "loi7q-3f9a-k28p"        # access key for this page (?key=...)
+# This repo is public — these come from Lambda environment variables, never hardcoded.
+LOI_PAGE_KEY     = os.environ.get("LOI_PAGE_KEY", "")
+LOI_TOKEN_SECRET = os.environ.get("LOI_TOKEN_SECRET", "")
 PIPELINE_BASE = "https://api.pipelinecrm.com/api/v3"
 SES_SENDER    = "agent@agent.graciagroup.com"
 CHAD_EMAIL    = "cgracia@rainmakersecurities.com"
@@ -535,6 +540,7 @@ def render_loi(deal, person, role="", company=None):
     btn.disabled = true;
     var body = new URLSearchParams({{
       key: new URLSearchParams(location.search).get('key') || '',
+      t: new URLSearchParams(location.search).get('t') || '',
       deal_id: new URLSearchParams(location.search).get('deal_id') || '',
       role: new URLSearchParams(location.search).get('role') || '',
       side: btn.getAttribute('data-side') || '',
@@ -579,6 +585,72 @@ def send_email(subject, text_body):
             "Body": {"Text": {"Data": text_body}},
         },
     )
+
+def make_token(deal_id) -> str:
+    sig = hmac.new(LOI_TOKEN_SECRET.encode(), str(deal_id).encode(), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(sig).decode().rstrip("=")
+
+
+def verify_token(deal_id, token: str) -> bool:
+    if not token or not LOI_TOKEN_SECRET:
+        return False
+    return hmac.compare_digest(make_token(deal_id), token)
+
+
+def send_email_to(to_address, subject, text_body):
+    """Send to a recipient, with replies going to Chad rather than the agent mailbox."""
+    ses = boto3.client("ses", region_name="us-east-1")
+    ses.send_email(
+        Source=SES_SENDER,
+        Destination={"ToAddresses": [to_address]},
+        ReplyToAddresses=[CHAD_EMAIL],
+        Message={
+            "Subject": {"Data": subject},
+            "Body": {"Text": {"Data": text_body}},
+        },
+    )
+
+
+def handle_send(event, params):
+    """Admin route: email the deal's primary contact a tokenized LOI link."""
+    deal_id = params.get("deal_id", "")
+    if not deal_id:
+        return _resp(400, "missing deal_id", "text/plain")
+    jwt = get_jwt()
+    dr = call_pipeline_api("GET", f"/deals/{deal_id}.json", jwt)
+    if dr["status"] != 200:
+        return _resp(404, f"deal not found ({deal_id})", "text/plain")
+    deal = dr["data"]
+    contact = deal.get("primary_contact") or {}
+    pid = contact.get("id")
+    person = {}
+    if pid:
+        pr = call_pipeline_api("GET", f"/people/{pid}.json", jwt)
+        if pr["status"] == 200:
+            person = pr["data"]
+    to_addr = (person.get("email") or contact.get("email") or "").strip()
+    if not to_addr:
+        return _resp(400, "that contact has no email address on file", "text/plain")
+    first    = (person.get("first_name") or contact.get("first_name") or "").strip()
+    security = (deal.get("company") or {}).get("name") or ""
+    domain   = (event.get("requestContext") or {}).get("domainName") or ""
+    link     = f"https://{domain}/?deal_id={deal_id}&t={make_token(deal_id)}"
+    body = (f"{first} -\n\n"
+            f"Thank you for your indication. The counterparty is collecting Letters of "
+            f"Intent, and you can submit one here:\n\n"
+            f"{link}\n")
+    subject = f"Letter of Intent — {security}" if security else "Letter of Intent"
+    try:
+        send_email_to(to_addr, subject, body)
+    except Exception as e:
+        return _resp(500, f"send failed: {e}", "text/plain")
+    return _resp(200,
+                 f"<div style=\"font-family:-apple-system,sans-serif;padding:28px;\">"
+                 f"<h3 style=\"margin:0 0 6px;\">LOI link sent</h3>"
+                 f"<p style=\"margin:0;color:#5b6472;\">To {escape(first)} "
+                 f"&lt;{escape(to_addr)}&gt; — {escape(security)}</p></div>",
+                 "text/html")
+
 
 def _plain(s):
     """Times is a latin-1 core font, so fold the typographic characters down."""
@@ -712,9 +784,21 @@ def handle_sign(event):
         send_email(subject + " (PDF failed)", "\n".join(lines) + f"\n\nPDF ERROR: {e}")
     return _json(200, {"ok": True})
 
+def _authed(params) -> bool:
+    """A tokenized link is scoped to one deal; the page key is admin-only preview."""
+    deal_id = params.get("deal_id", "")
+    if deal_id and verify_token(deal_id, params.get("t", "")):
+        return True
+    return bool(LOI_PAGE_KEY) and params.get("key", "") == LOI_PAGE_KEY
+
+
 def lambda_handler(event, context):
     params = (event.get("queryStringParameters") or {})
-    if params.get("key", "") != LOI_PAGE_KEY:
+    if params.get("send"):
+        if not LOI_PAGE_KEY or params.get("key", "") != LOI_PAGE_KEY:
+            return _resp(403, "forbidden", "text/plain")
+        return handle_send(event, params)
+    if not _authed(params):
         return _resp(403, "forbidden", "text/plain")
     if event.get("requestContext", {}).get("http", {}).get("method", "").upper() == "POST" or \
        event.get("httpMethod", "").upper() == "POST":
