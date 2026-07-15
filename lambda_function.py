@@ -192,7 +192,7 @@ def render_loi(deal, person, role=""):
     addr_lines   = address_block(person)
     _now         = datetime.datetime.utcnow()
     today        = _now.strftime("%B %-d, %Y")
-    expiry       = (_now + datetime.timedelta(days=30)).strftime("%B %-d, %Y")
+
 
     # investor-level party label (used later on the seller notice; shown here for reference)
     inv = cf_first(pcf, INVESTOR_LEVEL_FIELD)
@@ -244,9 +244,7 @@ def render_loi(deal, person, role=""):
     terms_para = f'''
       <p>Accordingly, the {signer_party} proposes to {action_verb} shares of the Company for an
       {consideration} of up to $<span id="tp-size">{target or '&mdash;'}</span>,
-      {price_clause}.{fee_clause} The terms set forth herein shall remain open for acceptance
-      until {escape(expiry)}, after which this letter expires automatically without further
-      action by either party.</p>
+      {price_clause}.{fee_clause}<span id="tp-expclause"></span></p>
     '''
 
     # ── price / size entry ──
@@ -264,6 +262,10 @@ def render_loi(deal, person, role=""):
         min_disp = fmt_money(cf_first(cf, MIN_SIZE_FIELD)) or ""
     size_hint = (f'<div class="hint" style="margin-bottom:14px;">Minimum: ${min_disp}.</div>'
                  if min_disp else '')
+    exp_input = ('<label>This letter remains open for</label>'
+                 '<div class="dayrow"><input type="text" name="expdays" value="" '
+                 'oninput="syncTerms()"><span class="dayunit">days</span></div>'
+                 '<div class="hint">If empty, good till filled.</div>')
     size_input = (f'<input type="text" name="size" class="prefill" value="{min_disp}"{buyer_req} '
                   f'data-min="{min_raw}" oninput="this.classList.remove(\'prefill\');syncTerms()" '
                   f'onblur="clampMin(this)">')
@@ -274,6 +276,7 @@ def render_loi(deal, person, role=""):
       <label>Size you intend to {action_verb} (USD){req_star}</label>
       {size_input}
       {size_hint}
+      {exp_input}
         '''
     else:
         price_section = f'''
@@ -282,6 +285,7 @@ def render_loi(deal, person, role=""):
       <label>Size you intend to {action_verb} (USD){req_star}</label>
       {size_input}
       {size_hint}
+      {exp_input}
         '''
 
     # ── SPV fee stack (shown for SPV, firm or tied) ──
@@ -376,6 +380,23 @@ def render_loi(deal, person, role=""):
     put('tp-mgmt', 'mgmt_fee', false);
     put('tp-carry', 'carry', false);
     put('tp-sfee', 'seller_fee', false);
+    syncExpiry();
+  }}
+  function syncExpiry() {{
+    var span = document.getElementById('tp-expclause');
+    var input = document.querySelector('[name="expdays"]');
+    if (!span || !input) return;
+    var raw = (input.value || '').trim();
+    var n = parseInt(raw, 10);
+    if (raw === '' || isNaN(n) || n <= 0) {{
+      span.textContent = '';
+      return;
+    }}
+    var d = new Date();
+    d.setDate(d.getDate() + n);
+    var txt = d.toLocaleDateString('en-US', {{year: 'numeric', month: 'long', day: 'numeric'}});
+    span.textContent = ' The terms set forth herein shall remain open for acceptance until ' +
+      txt + ', after which this letter expires automatically without further action by either party.';
   }}
   </script>
 </body></html>'''
