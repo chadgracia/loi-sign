@@ -142,7 +142,7 @@ body { margin:0; background:#f4f5f7; color:#1a1a1a;
 .roundnote { background:#fff8e6; border:1px solid #f0e2b6; border-radius:8px;
   padding:14px 16px; font-size:14px; line-height:1.5; margin-bottom:22px; color:#5a4a12; }
 .feebox { border:1px solid #e6ebf2; border-radius:8px; padding:14px 18px; margin-bottom:22px; }
-.feebox h3 { margin:0 0 4px 0; font-size:13px; text-transform:uppercase;
+.feebox h3 { margin:0 0 12px 0; font-size:13px; text-transform:uppercase;
   letter-spacing:.08em; color:#5b6472; }
 .feebox .note { font-size:12px; color:#8a929d; margin-bottom:10px; }
 .feebox .frow { display:flex; justify-content:space-between; padding:4px 0; font-size:14px; }
@@ -263,8 +263,16 @@ def render_loi(deal, person, role=""):
                         "determined upon the closing of the Company&rsquo;s current financing "
                         "round or tender")
     else:
-        price_clause = (f"at a {price_word} price of $<span id=\"tp-price\">{price or '&mdash;'}</span> "
-                        f"per share")
+        _spv_flag = "1" if is_spv else "0"
+        if price:
+            _inner = f"at a {price_word} price of ${price} per share"
+        elif is_spv:
+            _inner = ("at a net per-share price to be determined by the results of the "
+                      "Company&rsquo;s current financing round")
+        else:
+            _inner = f"at a {price_word} price of $&mdash; per share"
+        price_clause = (f'<span id="tp-priceclause" data-word="{price_word}" '
+                        f'data-spv="{_spv_flag}">{_inner}</span>')
     fee_clause = ""
     if is_spv:
         fee_clause = (f" If via fund, this price is exclusive of a management fee of "
@@ -282,6 +290,10 @@ def render_loi(deal, person, role=""):
     FIRM_MIN  = 100000
     buyer_req = '' if is_sell else ' data-required="1"'
     req_star  = '' if is_sell else ' <span class="req">*</span>'
+    # Price is required for Direct/Forward (both sides). For an SPV the signer may not
+    # know it yet, so it stays optional and the letter falls back to round-based wording.
+    price_req  = '' if is_spv else ' data-required="1"'
+    price_star = '' if is_spv else ' <span class="req">*</span>'
     if is_sell:
         min_raw  = FIRM_MIN
         min_disp = "100,000"
@@ -311,8 +323,8 @@ def render_loi(deal, person, role=""):
         '''
     else:
         price_section = f'''
-      <label>{price_word.capitalize()} price per share (USD) — current price shown; confirm or adjust</label>
-      <input type="text" name="gross" class="prefill" value="{price or ''}" oninput="this.classList.remove('prefill');syncTerms()">
+      <label>{price_word.capitalize()} price per share (USD){price_star} — current price shown; confirm or adjust</label>
+      <input type="text" name="gross" class="prefill" value="{price or ''}"{price_req} oninput="this.classList.remove('prefill');syncTerms()">
       <label>Size you intend to {action_verb} (USD){req_star}</label>
       {size_input}
       {size_hint}
@@ -324,13 +336,13 @@ def render_loi(deal, person, role=""):
     if is_spv:
         fee_section = f'''
       <div class="feebox">
-        <h3>Max fees you&rsquo;d pay</h3>
+        <h3>Max fees you&rsquo;d pay if via SPV</h3>
         <div class="frow"><span>Management fee{req_star}</span>
           <input type="text" name="mgmt_fee" class="feein prefill" value="{escape(str(mgmt))}"{buyer_req} oninput="this.classList.remove('prefill');syncTerms()"></div>
         <div class="frow"><span>Carry{req_star}</span>
           <input type="text" name="carry" class="feein prefill" value="{escape(str(carry))}"{buyer_req} oninput="this.classList.remove('prefill');syncTerms()"></div>
-        <div class="frow"><span>One-time fee</span>
-          <input type="text" name="seller_fee" class="feein prefill" value="{escape(str(sfee))}" oninput="this.classList.remove('prefill');syncTerms()"></div>
+        <div class="frow"><span>One-time fee{req_star}</span>
+          <input type="text" name="seller_fee" class="feein prefill" value="{escape(str(sfee))}"{buyer_req} oninput="this.classList.remove('prefill');syncTerms()"></div>
       </div>
         '''
 
@@ -391,14 +403,14 @@ def render_loi(deal, person, role=""):
     if (!ok) {{ alert('Please complete the required fields.'); }}
     return ok;
   }}
+  function grp(s) {{
+    var raw = s.replace(/,/g, '').trim();
+    var n = parseFloat(raw);
+    if (isNaN(n)) return s;
+    if (n === Math.floor(n)) return n.toLocaleString('en-US');
+    return n.toLocaleString('en-US', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+  }}
   function syncTerms() {{
-    function grp(s) {{
-      var raw = s.replace(/,/g, '').trim();
-      var n = parseFloat(raw);
-      if (isNaN(n)) return s;
-      if (n === Math.floor(n)) return n.toLocaleString('en-US');
-      return n.toLocaleString('en-US', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
-    }}
     function put(id, name, numeric) {{
       var span = document.getElementById(id);
       var input = document.querySelector('[name="' + name + '"]');
@@ -407,11 +419,26 @@ def render_loi(deal, person, role=""):
       }}
     }}
     put('tp-size', 'size', true);
-    put('tp-price', 'gross', true);
     put('tp-mgmt', 'mgmt_fee', false);
     put('tp-carry', 'carry', false);
     put('tp-sfee', 'seller_fee', false);
+    syncPrice();
     syncExpiry();
+  }}
+  function syncPrice() {{
+    var span = document.getElementById('tp-priceclause');
+    var input = document.querySelector('[name="gross"]');
+    if (!span || !input) return;
+    var word = span.getAttribute('data-word') || 'gross';
+    var spv = span.getAttribute('data-spv') === '1';
+    var raw = (input.value || '').trim();
+    if (raw === '') {{
+      span.innerHTML = spv
+        ? 'at a net per-share price to be determined by the results of the Company&rsquo;s current financing round'
+        : 'at a ' + word + ' price of $&mdash; per share';
+    }} else {{
+      span.innerHTML = 'at a ' + word + ' price of $' + grp(raw) + ' per share';
+    }}
   }}
   function syncExpiry() {{
     var span = document.getElementById('tp-expclause');
