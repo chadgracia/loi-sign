@@ -823,9 +823,9 @@ def _authed(params) -> bool:
 def lambda_handler(event, context):
     params = (event.get("queryStringParameters") or {})
     if params.get("send"):
-        if not LOI_PAGE_KEY or params.get("key", "") != LOI_PAGE_KEY:
-            return _resp(403, "forbidden", "text/plain")
-        return handle_send(event, params)
+        # KILL SWITCH — send route disabled pending incident review. Do not re-enable
+        # until the trigger is confirmed and the route requires POST + confirmation.
+        return _resp(403, "send disabled", "text/plain")
     if not _authed(params):
         return _resp(403, "forbidden", "text/plain")
     if event.get("requestContext", {}).get("http", {}).get("method", "").upper() == "POST" or \
