@@ -639,8 +639,34 @@ def send_email_to(to_address, subject, text_body):
     )
 
 
-def handle_send(event, params):
-    """Admin route: email the deal's primary contact a tokenized LOI link."""
+def _send_confirm_page(deal_id, key, name, to_addr, security):
+    action = f"/?send=1&deal_id={escape(str(deal_id))}&key={escape(key)}"
+    sec = f" regarding {escape(security)}" if security else ""
+    return (
+        '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta name="robots" content="noindex,nofollow">'
+        '<title>Send LOI link</title></head>'
+        "<body style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
+        'background:#f4f5f7;margin:0;padding:40px;">'
+        '<div style="max-width:460px;margin:0 auto;background:#fff;border:1px solid #e3e5e8;'
+        'border-radius:10px;padding:30px 32px;">'
+        '<h2 style="margin:0 0 10px;font-size:19px;color:#0f1e35;">Send an LOI link?</h2>'
+        f'<p style="margin:0 0 4px;font-size:15px;color:#1a1a1a;">To {escape(name)} '
+        f'&lt;{escape(to_addr)}&gt;{sec}.</p>'
+        '<p style="margin:0 0 20px;font-size:13px;color:#8a929d;">Nothing is sent until you '
+        'press the button.</p>'
+        f'<form method="POST" action="{action}">'
+        '<button type="submit" style="background:#1652f0;color:#fff;padding:12px 26px;border:none;'
+        'border-radius:7px;font-size:15px;font-weight:600;cursor:pointer;">Send the LOI link</button>'
+        '</form></div></body></html>'
+    )
+
+
+def handle_send(event, params, method):
+    """A GET only renders a confirmation page — nothing is sent. The email goes out only
+    on the POST from the Send button, so link-scanners and prefetchers (which GET and
+    never submit forms) cannot trigger a send. Mirrors deal-nudge."""
     deal_id = params.get("deal_id", "")
     if not deal_id:
         return _resp(400, "missing deal_id", "text/plain")
@@ -658,9 +684,15 @@ def handle_send(event, params):
             person = pr["data"]
     to_addr = (person.get("email") or contact.get("email") or "").strip()
     if not to_addr:
-        return _resp(400, "that contact has no email address on file", "text/plain")
+        return _resp(200, f"No email on file for the contact on deal {deal_id}. Nothing sent.", "text/plain")
     first    = (person.get("first_name") or contact.get("first_name") or "").strip()
+    name     = (person.get("full_name") or contact.get("full_name") or first or "the contact").strip()
     security = (deal.get("company") or {}).get("name") or ""
+
+    # Safe GET: render the confirmation page only. Nothing is sent until the POST.
+    if method != "POST":
+        return _resp(200, _send_confirm_page(deal_id, params.get("key", ""), name, to_addr, security), "text/html")
+
     domain   = (event.get("requestContext") or {}).get("domainName") or ""
     link     = f"https://{domain}/?deal_id={deal_id}&t={make_token(deal_id)}"
     body = (f"{first} -\n\n"
@@ -823,9 +855,11 @@ def _authed(params) -> bool:
 def lambda_handler(event, context):
     params = (event.get("queryStringParameters") or {})
     if params.get("send"):
-        # KILL SWITCH — send route disabled pending incident review. Do not re-enable
-        # until the trigger is confirmed and the route requires POST + confirmation.
-        return _resp(403, "send disabled", "text/plain")
+        if not LOI_PAGE_KEY or params.get("key", "") != LOI_PAGE_KEY:
+            return _resp(403, "forbidden", "text/plain")
+        _m = (event.get("requestContext", {}).get("http", {}).get("method", "")
+              or event.get("httpMethod", "")).upper()
+        return handle_send(event, params, _m)
     if not _authed(params):
         return _resp(403, "forbidden", "text/plain")
     if event.get("requestContext", {}).get("http", {}).get("method", "").upper() == "POST" or \
