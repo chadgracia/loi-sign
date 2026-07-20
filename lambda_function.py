@@ -451,7 +451,7 @@ def render_loi(deal, person, role="", company=None):
       <div class="letter">{recital}{terms_para}</div>
       {sig}
       <div class="signwrap">
-        <button id="signbtn" class="signbtn" data-side="{side_label}" data-iqf="{'1' if iqf_cleared else '0'}" data-iqfurl="{iqf_url}" onclick="return doSign();">Click to sign</button>
+        <button id="signbtn" class="signbtn" data-side="{side_label}" data-structure="{escape(', '.join(p.title() for p in _phrases) if _phrases else structure_label)}" data-iqf="{'1' if iqf_cleared else '0'}" data-iqfurl="{iqf_url}" onclick="return doSign();">Click to sign</button>
         <div class="sigrule"></div>
       </div>
     </div>
@@ -562,6 +562,7 @@ def render_loi(deal, person, role="", company=None):
       deal_id: new URLSearchParams(location.search).get('deal_id') || '',
       role: new URLSearchParams(location.search).get('role') || '',
       side: btn.getAttribute('data-side') || '',
+      structure: btn.getAttribute('data-structure') || '',
       gross: fieldVal('gross'),
       size: fieldVal('size'),
       expdays: fieldVal('expdays'),
@@ -808,13 +809,22 @@ def handle_sign(event):
     mgmt_fee = fv("mgmt_fee")
     carry    = fv("carry")
     sfee     = fv("seller_fee")
+    _client    = fv("signer_name")
+    _reline    = fv("reline")
+    _security  = _reline[3:].strip() if _reline.lower().startswith("re:") else _reline
+    _structure = fv("structure")
     lines = [
         f"LOI signed — {side}",
-        f"Deal ID : {deal_id}",
-        f"Role    : {role or side}",
-        f"Price   : ${gross}/sh" if gross else "Price   : (not specified)",
-        f"Size    : ${size}" if size else "Size    : (not specified)",
-        f"Expiry  : {expdays} days" if expdays else "Expiry  : open",
+        "",
+        f"Client   : {_client}",
+        f"Security : {_security}",
+        f"Structure: {_structure}",
+        "",
+        f"Deal ID  : {deal_id}",
+        f"Role     : {role or side}",
+        f"Price    : ${gross}/sh" if gross else "Price    : (not specified)",
+        f"Size     : ${size}" if size else "Size     : (not specified)",
+        f"Expiry   : {expdays} days" if expdays else "Expiry   : open",
     ]
     if mgmt_fee or carry or sfee:
         lines += [
