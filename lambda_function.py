@@ -293,7 +293,6 @@ def render_loi(deal, person, role="", company=None):
     sfee  = cf_first(cf, SELLER_FEE_FIELD) or "0"
 
     # ── closing terms paragraph (prose restatement, updates live from the inputs) ──
-    consideration = "aggregate consideration" if is_sell else "aggregate purchase price"
     if tied:
         price_clause = ("at a per-share price to be established at the net per-share price "
                         "determined upon the closing of the Company&rsquo;s current financing "
@@ -317,8 +316,8 @@ def render_loi(deal, person, role="", company=None):
                       f"<span id=\"tp-sfee\">{escape(str(sfee))}</span>%, as well as "
                       f"Rainmaker Securities&rsquo; commission.")
     terms_para = f'''
-      <p>Accordingly, the {signer_party} proposes to {action_verb} shares of the Company for an
-      {consideration} of up to $<span id="tp-size">{target or '&mdash;'}</span>,
+      <p>Accordingly, the {signer_party} proposes to {action_verb} up to
+      $<span id="tp-size">{target or '&mdash;'}</span> of shares in the Company,
       {price_clause}.{fee_clause}<span id="tp-expclause"></span></p>
     '''
 
@@ -364,14 +363,15 @@ def render_loi(deal, person, role="", company=None):
                     f'<span id="valtext"></span>'
                     f'<div class="valnote">Valuation based on last public round.</div></div>')
     if is_sell:
-        min_raw  = FIRM_MIN
-        min_disp = "100,000"
+        min_raw = FIRM_MIN
     else:
         try:
             min_raw = int(float(str(cf_first(cf, MIN_SIZE_FIELD)).replace(",", "")))
         except (TypeError, ValueError):
             min_raw = 0
-        min_disp = fmt_money(cf_first(cf, MIN_SIZE_FIELD)) or ""
+        if min_raw < FIRM_MIN:
+            min_raw = FIRM_MIN
+    min_disp = fmt_money(min_raw) or ""
     size_hint = (f'<div class="hint" style="margin-bottom:14px;">Minimum: ${min_disp}.</div>'
                  if min_disp else '')
     exp_input = ('<label>This letter remains open for</label>'
